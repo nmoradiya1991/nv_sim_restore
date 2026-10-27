@@ -1,0 +1,14 @@
+logs/
+*.log
+simv
+simv.daidir/
+csrc/
+ucli.key
+vc_hdrs.h
+AN.DB/
+ckpt_vcs/
+xcelium.d/
+xrun.history
+xrun.key
+.simvision/
+waves.shm/
