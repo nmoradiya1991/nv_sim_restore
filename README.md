@@ -120,7 +120,7 @@ sequenceDiagram
     Note over Boot,UVM: +NV_SOCV_DELAYED_TEST_LAUNCH
     UVM->>Gate: wait_for_test_launch_trigger()  (time 0, blocks)
     Boot->>Boot: reset, firmware load, pins idle
-    Boot-->>Boot: ◆ save point A  ($save / Tcl save)
+    Boot-->>Boot: ◆ save point A  ($save)
     Boot->>Gate: trigger_test_launch()
     Gate->>Gate: suppress RUNPHSTIME
     Gate->>CLP: refresh_cmdline_parser_for_test_launch()
@@ -333,7 +333,7 @@ flowchart TD
 | | Save run | Restore run |
 |:--|:--|:--|
 | **VCS** | `./simv <args> +sim_image_save_enable +sim_image_save_dir_path=<dir> +sim_image_save_file=<f> [+sim_finish_after_save]` → `$save` | `./simv -r <dir>/<f> +sim_image_restore_enable <new args>` |
-| **Xcelium** | `xrun -R -input tests/common/xrun_save.tcl <args> +sim_image_save_enable` → `$stop` + Tcl `save -simulation <snap>` | `xrun -r <snap> +sim_image_restore_enable <new args>` |
+| **Xcelium** | elaborate and run with `-64bit -process_save`: `xrun -64bit -R -process_save <args> +sim_image_save_enable +sim_image_save_file=<name> [+sim_finish_after_save]` → `$save("<name>")` | `xrun -64bit -r <name> +sim_image_restore_enable <new args>` |
 | Approach A | `+NV_SOCV_DELAYED_TEST_LAUNCH` | `+UVM_TESTNAME=<test>` + test plusargs / `+uvm_set_*` |
 | Pre domain (point A) | *no* `+UVM_TESTNAME` | `+UVM_TESTNAME=<main test>` + main plusargs |
 | Post domain (point B) | `+UVM_TESTNAME=<main>` | `+POST_TEST=<post test>` + post plusargs |
@@ -359,8 +359,7 @@ nv_socv_sim_restore/
 └── tests/
     ├── common/
     │   ├── common.mk            VCS / Xcelium flow, sim_run / sim_save / sim_restore
-    │   ├── sim_save_restore.sv  $save (VCS) · $stop + Tcl save (Xcelium)
-    │   ├── xrun_save.tcl        Xcelium save script
+    │   ├── sim_save_restore.sv  $save — VCS · Xcelium -process_save
     │   └── tests_common_pkg.sv  phase_logger · heartbeat · jump_once · save_point
     ├── delayed_launch/          Approach A
     ├── pre_domain/              Approach B — pre domain   (save point A)
@@ -415,7 +414,12 @@ make compile VCS_HOME=/path/to/vcs            # vcs not on PATH
 
 ### Xcelium
 
-Same targets with `SIM=xrun`; compile once per test folder.
+Same targets with `SIM=xrun`; compile once per test folder. Save/restore uses
+Xcelium's process-based checkpoint: `-process_save` (with `-64bit`) on the
+elaboration and the simulation, `$save("<name>")` at the save point, then
+`xrun -r <name>` to restore and continue. A Tcl `save -simulation` does not
+work here: it fails with `*E,SVNOCL` once SystemVerilog class objects (the
+UVM tree) exist.
 
 ```bash
 export XCELIUM_HOME=/path/to/XCELIUM<version>  # xrun = $XCELIUM_HOME/tools/bin/xrun
@@ -426,9 +430,9 @@ export UVM_HOME=CDNS-1.2                       # or a UVM source install
 
 ```bash
 cd tests/delayed_launch
-make compile SIM=xrun                          # xrun -uvm -uvmhome $UVM_HOME -elaborate
-make run_delayed SIM=xrun                      # xrun -R +NV_SOCV_DELAYED_TEST_LAUNCH
-make save SIM=xrun                             # ◆ A: $stop → Tcl 'save -simulation dl_ckpt_a'
+make compile SIM=xrun                          # xrun -64bit -uvm -uvmhome $UVM_HOME -elaborate -process_save
+make run_delayed SIM=xrun                      # xrun -64bit -R -process_save +NV_SOCV_DELAYED_TEST_LAUNCH
+make save SIM=xrun                             # ◆ A: $save("dl_ckpt_a")
 make restore SIM=xrun TEST=dl_test_b DL_MODE=7 # xrun -r dl_ckpt_a +UVM_TESTNAME=dl_test_b +DL_MODE=7 ...
 ```
 
@@ -438,7 +442,7 @@ make restore SIM=xrun TEST=dl_test_b DL_MODE=7 # xrun -r dl_ckpt_a +UVM_TESTNAME
 cd tests/pre_domain
 make compile SIM=xrun
 make run_default SIM=xrun
-make save SIM=xrun                             # ◆ A: $stop → Tcl 'save -simulation pre_ckpt_a'
+make save SIM=xrun                             # ◆ A: $save("pre_ckpt_a")
 make restore SIM=xrun MAIN_TEST=soc_test_b     # xrun -r pre_ckpt_a +UVM_TESTNAME=soc_test_b
 ```
 
@@ -448,7 +452,7 @@ make restore SIM=xrun MAIN_TEST=soc_test_b     # xrun -r pre_ckpt_a +UVM_TESTNAM
 cd tests/post_domain
 make compile SIM=xrun
 make run_default SIM=xrun
-make save SIM=xrun                             # ◆ B: $stop → Tcl 'save -simulation post_ckpt_b'
+make save SIM=xrun                             # ◆ B: $save("post_ckpt_b")
 make restore SIM=xrun POST_TEST=pcie_post_test_b
 ```
 
@@ -468,7 +472,7 @@ make restore SIM=xrun POST_TEST=pcie_post_test_b
 | `UVM_HOME` | — | Xcelium `-uvmhome` |
 | `VERBOSITY` | `UVM_MEDIUM` | `+UVM_VERBOSITY` |
 | `ARGS` | — | extra plusargs on every run |
-| `CKPT_NAME` | per test | VCS `ckpt_vcs/<name>.chk` · Xcelium snapshot `<name>` |
+| `CKPT_NAME` | per test | VCS `ckpt_vcs/<name>.chk` · Xcelium checkpoint `<name>` (`xrun -r <name>`) |
 | `SAVE_FINISH` | `1` | `+sim_finish_after_save` on `make save` |
 | `VCS_EXTRA` / `XRUN_EXTRA` | — | extra compile options |
 

@@ -6,8 +6,8 @@
 # sim_restore.
 #
 #   SIM=vcs   (default)  vcs -ntb_opts $(UVM_VER)   save: $save    restore: simv -r
-#   SIM=xrun             xrun -uvm -uvmhome $(UVM_HOME)
-#                        save: $stop + Tcl 'save'   restore: xrun -r
+#   SIM=xrun             xrun -uvm -uvmhome $(UVM_HOME) -process_save
+#                        save: $save("<name>")     restore: xrun -r <name>
 #                        needs XCELIUM_HOME (or XRUN) and UVM_HOME
 #
 # Variables:
@@ -54,8 +54,6 @@ ifeq ($(SIM),vcs)
                 +sim_image_save_file=$(CKPT_NAME).chk $(SR_FINISH)
   RESTORE_CMD = ./$(SIMV) -r $(CKPT_DIR)/$(CKPT_NAME).chk \
                 +sim_image_restore_enable $(SIM_ARGS)
-  CLEAN_FILES = $(SIMV) $(SIMV).daidir csrc ucli.key vc_hdrs.h AN.DB \
-                $(CKPT_DIR)
   TOOL_CHECK  = true
 
 else ifeq ($(SIM),xrun)
@@ -63,16 +61,15 @@ else ifeq ($(SIM),xrun)
   XLIB     ?= xcelium.d
 
   COMPILE_CMD = $(XRUN) -64bit -sv -uvm -uvmhome $(UVM_HOME) \
-                -timescale 1ns/1ps -access +rwc -elaborate \
+                -timescale 1ns/1ps -access +rwc -elaborate -process_save \
                 -xmlibdirname $(XLIB) +define+NV_SR_XCELIUM \
                 -top $(TOP) $(LIB_FILES) $(TB_FILES) $(XRUN_EXTRA)
-  RUN_CMD     = $(XRUN) -64bit -R -xmlibdirname $(XLIB) $(SIM_ARGS)
-  SAVE_CMD    = env XRUN_SNAP=$(CKPT_NAME) $(XRUN) -64bit -R \
-                -xmlibdirname $(XLIB) -input $(COMMON_DIR)/xrun_save.tcl \
-                $(SIM_ARGS) +sim_image_save_enable $(SR_FINISH)
-  RESTORE_CMD = $(XRUN) -64bit -r $(CKPT_NAME) -xmlibdirname $(XLIB) \
+  RUN_CMD     = $(XRUN) -64bit -R -process_save -xmlibdirname $(XLIB) $(SIM_ARGS)
+  SAVE_CMD    = $(XRUN) -64bit -R -process_save -xmlibdirname $(XLIB) \
+                $(SIM_ARGS) +sim_image_save_enable \
+                +sim_image_save_file=$(CKPT_NAME) $(SR_FINISH)
+  RESTORE_CMD = $(XRUN) -64bit -r $(CKPT_NAME) \
                 +sim_image_restore_enable $(SIM_ARGS)
-  CLEAN_FILES = $(XLIB) xrun.history xrun.key .simvision waves.shm
   TOOL_CHECK  = test -n "$(UVM_HOME)" && test -x "$(XRUN)" || \
                 { echo "SIM=xrun: set XCELIUM_HOME (or XRUN) and UVM_HOME"; exit 1; }
 
@@ -97,5 +94,12 @@ compile:
 	mkdir -p $(LOG_DIR)
 	$(COMPILE_CMD) -l $(LOG_DIR)/compile_$(SIM).log
 
+# Both simulators' outputs, whatever SIM is.
+VCS_CLEAN  = $(or $(SIMV),simv) $(or $(SIMV),simv).daidir csrc ucli.key \
+             vc_hdrs.h AN.DB tr_db.log $(or $(CKPT_DIR),ckpt_vcs)
+XRUN_CLEAN = $(or $(XLIB),xcelium.d) xrun.history xrun.key .simvision \
+             waves.shm .process_save .xm_dmtcp_env.txt_* \
+             $(CKPT_NAME) $(CKPT_NAME).*
+
 clean:
-	rm -rf $(CLEAN_FILES) $(LOG_DIR) *.log
+	rm -rf $(VCS_CLEAN) $(XRUN_CLEAN) $(LOG_DIR) *.log

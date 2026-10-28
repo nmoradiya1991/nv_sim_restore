@@ -3,13 +3,13 @@
 // modelled on nitro_lib nitro_utils (same plusargs and events).
 //
 //   VCS     : $save(<dir>/<file>); restore with simv -r <dir>/<file> ...
-//   Xcelium : $stop; common/xrun_save.tcl runs 'save -simulation <snap>';
-//             restore with xrun -r <snap> ...   (+define+NV_SR_XCELIUM)
+//   Xcelium : $save(<file>), elaborated and run with -process_save;
+//             restore with xrun -r <file> ...   (+define+NV_SR_XCELIUM)
 //
 // Plusargs (save run):
 //   +sim_image_save_enable            enable saving
 //   +sim_image_save_dir_path=<dir>    VCS checkpoint directory (default .)
-//   +sim_image_save_file=<name>       VCS file name (default sim.<t>ps.chk)
+//   +sim_image_save_file=<name>       checkpoint file / name (default sim.<t>ps.chk)
 //   +sim_image_save_time=<ps>         also save at <ps> (0 / unset: no timed save)
 //   +sim_finish_after_save            $finish right after the save
 // Plusargs (restored run):
@@ -46,15 +46,13 @@ module sim_save_restore;
 
     if (!$value$plusargs("sim_image_save_file=%s", save_file))
       save_file = $sformatf("sim.%0dps.chk", longint'($realtime / 1ps));
+`ifndef NV_SR_XCELIUM
+    // Xcelium takes the bare checkpoint name, the same name given to xrun -r.
     save_file = {save_dir, "/", save_file};
+`endif
 
-`ifdef NV_SR_XCELIUM
-    $display("<%0t> SIM_IMAGE: $stop for the Tcl 'save' command", $realtime);
-    $stop;
-`else
     $display("<%0t> SIM_IMAGE: saving checkpoint %s", $realtime, save_file);
     $save(save_file);
-`endif
 
     // A restored simulation resumes here, with the restore command line.
     #1ps;

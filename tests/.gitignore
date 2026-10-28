@@ -12,3 +12,5 @@ xrun.history
 xrun.key
 .simvision/
 waves.shm/
+.process_save/
+.xm_dmtcp_env.txt_*
