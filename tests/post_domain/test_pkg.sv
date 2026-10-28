@@ -16,6 +16,20 @@
 //     env.hb       : ps_run heartbeat
 //   pcie_post_test_b: pcie_post_test + env.pcie_cov (covergroup on the items)
 //
+// Command-line reprocessing targets: settings applied when the post tree is
+// built (release, non-zero time; after a restore: merged with the save
+// command line and reapplied):
+//   post tree : pcie_driver -> pcie_driver_fast / _slow (type),
+//               uvm_post_top.env.pcie_sb -> pcie_scoreboard_strict (instance),
+//               uvm_post_top.env.pcie_agt main_delay over the pcie env's own
+//               set (config_int), uvm_post_top.env profile (config_string)
+//               cl_expect keys DRV_TYPE, SB_TYPE, PCIE_MAIN, PROFILE
+//               (checked at ps_end_of_elaboration)
+//   main tree, already built at time 0, after the post domain started:
+//               env re-reads post_window (config_int) and creates a soc_txn
+//               (type override soc_txn -> soc_txn_ext)
+//               cl_expect keys POST_WINDOW, TXN_TYPE
+//
 // Plusargs read here:
 //   +MAIN_MAIN=<ns>        cpu_agt main_phase length (100)
 //   +RELEASE_PHASE=<name>  main runtime phase that triggers the release (main)
@@ -39,6 +53,20 @@ package test_pkg;
   // --------------------------------------------------------------------------
   // Main test.
   // --------------------------------------------------------------------------
+  class soc_txn extends uvm_object;
+    `uvm_object_utils(soc_txn)
+    function new(string name = "soc_txn");
+      super.new(name);
+    endfunction
+  endclass
+
+  class soc_txn_ext extends soc_txn;
+    `uvm_object_utils(soc_txn_ext)
+    function new(string name = "soc_txn_ext");
+      super.new(name);
+    endfunction
+  endclass
+
   class soc_main_env extends uvm_env;
     `uvm_component_utils(soc_main_env)
 
@@ -59,10 +87,18 @@ package test_pkg;
     endfunction
 
     virtual task run_phase(uvm_phase phase);
+      uvm_bitstream_t post_window = 0;
+      soc_txn         txn;
       post_domain_controller::wait_post_started();
       `uvm_info("ENV", $sformatf("post domain %s @%0t",
                 (post_domain_controller::is_post_started() ? "started" : "skipped"),
                 $time), UVM_LOW)
+      if (!post_domain_controller::is_post_started())
+        return;
+      void'(uvm_config_int::get(this, "", "post_window", post_window));
+      txn = soc_txn::type_id::create("txn");
+      cl_expect::check_int("POST_WINDOW", post_window, "main tree, config re-read after the release");
+      cl_expect::check("TXN_TYPE", txn.get_type_name(), "main tree, object created after the release");
     endtask
   endclass
 
@@ -121,6 +157,7 @@ package test_pkg;
       `uvm_info("MAIN", $sformatf(
         "post domain: released at %0t, skipped=%0d, synced=%0d, jumps mirrored=%0d",
         ctl.released_at, ctl.skipped, ctl.synced, ctl.n_mirrored), UVM_LOW)
+      cl_expect::summary();
     endfunction
   endclass
 
@@ -156,6 +193,7 @@ package test_pkg;
   class pcie_driver extends uvm_driver #(pcie_item);
     `uvm_component_utils(pcie_driver)
     uvm_analysis_port #(pcie_item) ap;
+    int unsigned                   latency = 2;
     function new(string name, uvm_component parent);
       super.new(name, parent);
       ap = new("ap", this);
@@ -164,7 +202,7 @@ package test_pkg;
       forever begin
         pcie_item it, r;
         seq_item_port.get_next_item(it);
-        #2;
+        #(latency);
         $cast(r, it.clone());
         r.set_id_info(it);
         seq_item_port.item_done();
@@ -172,6 +210,29 @@ package test_pkg;
         ap.write(r);
       end
     endtask
+  endclass
+
+  class pcie_driver_fast extends pcie_driver;
+    `uvm_component_utils(pcie_driver_fast)
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+      latency = 1;
+    endfunction
+  endclass
+
+  class pcie_driver_slow extends pcie_driver;
+    `uvm_component_utils(pcie_driver_slow)
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+      latency = 8;
+    endfunction
+  endclass
+
+  class pcie_agent extends cfg_agent;
+    `uvm_component_utils(pcie_agent)
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
   endclass
 
   class pcie_bus_agent extends uvm_agent;
@@ -205,7 +266,22 @@ package test_pkg;
       if (n_seen != n_expected)
         `uvm_error("PCIE_SB", $sformatf("%0d responses, %0d expected", n_seen, n_expected))
       else
-        `uvm_info("PCIE_SB", $sformatf("%0d responses, as expected", n_seen), UVM_LOW)
+        `uvm_info("PCIE_SB", $sformatf("%s: %0d responses, as expected",
+                  get_type_name(), n_seen), UVM_LOW)
+    endfunction
+  endclass
+
+  class pcie_scoreboard_strict extends pcie_scoreboard;
+    `uvm_component_utils(pcie_scoreboard_strict)
+    time last_at;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    virtual function void write(pcie_item t);
+      if (n_seen > 0 && $time == last_at)
+        `uvm_error("PCIE_SB", $sformatf("two responses at %0t", $time))
+      last_at = $time;
+      super.write(t);
     endfunction
   endclass
 
@@ -233,7 +309,8 @@ package test_pkg;
     `uvm_component_utils(pcie_env)
 
     bit             has_cov;
-    phase_logger    pcie_agt;
+    string          profile = "default";
+    pcie_agent      pcie_agt;
     pcie_bus_agent  pcie_bus;
     pcie_scoreboard pcie_sb;
     pcie_coverage   pcie_cov;
@@ -245,14 +322,15 @@ package test_pkg;
 
     virtual function void build_phase(uvm_phase phase);
       int unsigned main_ns = 20;
-      pcie_agt = phase_logger::type_id::create("pcie_agt", this);
+      void'($value$plusargs("POST_MAIN=%d", main_ns));
+      void'(uvm_config_string::get(this, "", "profile", profile));
+      uvm_config_int::set(this, "pcie_agt", "main_delay", main_ns);
+      pcie_agt = pcie_agent::type_id::create("pcie_agt", this);
       pcie_bus = pcie_bus_agent::type_id::create("pcie_bus", this);
       pcie_sb  = pcie_scoreboard::type_id::create("pcie_sb", this);
       hb       = heartbeat::type_id::create("hb", this);
       if (has_cov)
         pcie_cov = pcie_coverage::type_id::create("pcie_cov", this);
-      void'($value$plusargs("POST_MAIN=%d", main_ns));
-      pcie_agt.main_delay = main_ns;
     endfunction
 
     virtual function void connect_phase(uvm_phase phase);
@@ -291,6 +369,10 @@ package test_pkg;
 
     virtual function void end_of_elaboration_phase(uvm_phase phase);
       this.print();
+      cl_expect::check("DRV_TYPE", env.pcie_bus.drv.get_type_name(), "post tree, type override");
+      cl_expect::check("SB_TYPE", env.pcie_sb.get_type_name(), "post tree, instance override");
+      cl_expect::check_int("PCIE_MAIN", env.pcie_agt.main_delay, "post tree, config_int vs env default");
+      cl_expect::check("PROFILE", env.profile, "post tree, config_string");
     endfunction
 
     virtual task main_phase(uvm_phase phase);

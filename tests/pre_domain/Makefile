@@ -15,22 +15,62 @@
 #   make save                  save point A (boot done, gate closed), $finish
 #   make restore               restore A: main test $(MAIN_TEST), +MAIN_SEED
 #   make restore_a             restore A with soc_test_a
+#
+# Command-line reprocessing (factory overrides / config, checked with +EXP_*;
+# see "CL_EXPECT" in the log):
+#   make run_cl_pre            time 0, pre tree: fw_load_agent ->
+#                              fw_load_agent_fast (type), fw_load_agt
+#                              main_delay 90 over the boot env's own set
+#   make run_cl_main           no save: main-tree overrides on the command
+#                              line, main tree built at the release
+#   make save_cl               save point A with STALE main-tree settings:
+#                              cpu_agent -> cpu_agent_slow, cpu main 5,
+#                              profile "stale"
+#   make restore_cl            restore save_cl with NEW settings: soc_test_b,
+#                              cpu_agent -> cpu_agent_fast (type),
+#                              env.ddr_agt -> ddr_agent_lp (instance), cpu
+#                              main 250 over the env's own set, profile "perf"
+#   make restore_cl_drop       restore save_cl with no settings: the stale
+#                              ones are gone (the argv tables are rebuilt)
 #   make clean
 #
 #   Overrides: MAIN_TEST=soc_test_a MAIN_SEED=7 CKPT_NAME=pre_ckpt_a
 #              ARGS='+...' VERBOSITY=UVM_LOW
 # ============================================================================
 
-CKPT_NAME ?= pre_ckpt_a
-MAIN_TEST ?= soc_test_b
-MAIN_SEED ?= 42
+CKPT_NAME   ?= pre_ckpt_a
+CL_CKPT     ?= pre_ckpt_cl
+EXTRA_CKPTS  = $(CL_CKPT)
+MAIN_TEST   ?= soc_test_b
+MAIN_SEED   ?= 42
 
 include ../common/common.mk
 
 .DEFAULT_GOAL := help
 
+CL_PRE   = +uvm_set_type_override=fw_load_agent,fw_load_agent_fast \
+           +uvm_set_config_int=uvm_pre_top.env.fw_load_agt,main_delay,90 \
+           +EXP_FW_TYPE=fw_load_agent_fast +EXP_FW_MAIN=90
+# Stale settings given to the save run only.
+CL_STALE = +uvm_set_type_override=cpu_agent,cpu_agent_slow \
+           +uvm_set_config_int=uvm_test_top.env.cpu_agt,main_delay,5 \
+           +uvm_set_config_string=uvm_test_top.env,profile,stale
+# Settings given to the restored (or plain) run, and what they must give.
+CL_NEW   = +UVM_TESTNAME=soc_test_b \
+           +uvm_set_type_override=cpu_agent,cpu_agent_fast \
+           +uvm_set_inst_override=ddr_agent,ddr_agent_lp,uvm_test_top.env.ddr_agt \
+           +uvm_set_config_int=uvm_test_top.env.cpu_agt,main_delay,250 \
+           +uvm_set_config_string=uvm_test_top.env,profile,perf
+CL_EXP   = +EXP_CPU_TYPE=cpu_agent_fast +EXP_DDR_TYPE=ddr_agent_lp \
+           +EXP_CPU_MAIN=250 +EXP_PROFILE=perf
+CL_EXP_DROP = +UVM_TESTNAME=soc_test_b +EXP_CPU_TYPE=cpu_agent \
+           +EXP_DDR_TYPE=ddr_agent +EXP_CPU_MAIN=200 +EXP_PROFILE=default
+
+save_cl restore_cl restore_cl_drop: CKPT_NAME = $(CL_CKPT)
+
 .PHONY: run_default run_cmdline run_pre_long run_jump_back run_jump_fwd \
-        run_gate_timeout save restore restore_a
+        run_gate_timeout save restore restore_a \
+        run_cl_pre run_cl_main save_cl restore_cl restore_cl_drop
 
 run_default:
 	$(call sim_run,run_default,)
@@ -58,3 +98,18 @@ restore:
 
 restore_a:
 	$(call sim_restore,restore_a,+UVM_TESTNAME=soc_test_a)
+
+run_cl_pre:
+	$(call sim_run,run_cl_pre,$(CL_PRE))
+
+run_cl_main:
+	$(call sim_run,run_cl_main,$(CL_NEW) $(CL_EXP))
+
+save_cl:
+	$(call sim_save,save_cl,$(CL_STALE))
+
+restore_cl:
+	$(call sim_restore,restore_cl,$(CL_NEW) $(CL_EXP))
+
+restore_cl_drop:
+	$(call sim_restore,restore_cl_drop,$(CL_EXP_DROP))

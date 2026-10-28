@@ -12,8 +12,6 @@
  *   readiness, and also defines `nv_socv_config_db#(T)`, a `uvm_config_db#(T)`
  *   drop-in so call sites outside UVM phasing (module code, etc.) can wait
  *   for that same gate before reading config_db state.
- * - `nv_socv_load_c_shared_object` writes an optional feature shared-object path
- *   into Nitro memory for C++ `dlopen()`.
  * - `nv_socv_pre_domain.sv` (`install_pre_domain()`, `pd_release_main()`): a pre
  *   test in its own domain; the main test is built when the pre test releases it.
  * - `nv_socv_post_domain.sv` (`install_post_domain()`,
@@ -23,10 +21,6 @@
  *   Both reprocess the command line before a build that starts at non-zero time
  *   (`nv_socv_cmdline_processor::refresh_cmdline_for_late_build()`).
  *
- * The interface and Verilog bridge are included after the package because they
- * are structural TB elements rather than package classes. The generated
- * `miobfm_save_context_if.sv` dependency must be available in the build through
- * the EC/generated-file flow.
  */
 package nv_socv_sim_restore_pkg;
     timeunit 1fs;

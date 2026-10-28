@@ -37,7 +37,13 @@ import uvm_pkg::*;
  * Command line: right before pd_build and before the main build, the command
  * line is reprocessed with
  * `nv_socv_cmdline_processor::refresh_cmdline_for_late_build()` (no-op at
- * time 0 or if already refreshed in this invocation). The main test is then
+ * time 0 or if already refreshed in this invocation). At time 0, pd_build
+ * runs before uvm_root::build_phase(), so the command-line factory/config
+ * settings are applied for the pre tree at the start of pd_build
+ * (`apply_build_settings_for_early_build()`). In pd_build, config_db sets
+ * get the standard build-phase precedence (`enter_build_config_precedence()`),
+ * so `+uvm_set_config_*` wins over a pre-tree component's own set, as in a
+ * normal build. The main test is then
  * `uvm_test_top` if run_test() already created it, else `+UVM_TESTNAME` from
  * the reprocessed command line, else install_pre_domain()'s main_test.
  *
@@ -65,9 +71,15 @@ class pd_build_phase extends uvm_topdown_phase;
   // evaluated per child at that point: adopting here gets them built.
   // Components whose build_phase already ran (a parent called
   // child.build_phase() itself) are skipped, as UVM does for "build" only.
+  // config_db sets made by build_phase() get the standard build-phase
+  // precedence (higher level wins), as in the common build.
   virtual function void exec_func(uvm_component comp, uvm_phase phase);
-    if (!comp.m_build_done)
+    uvm_phase prev;
+    if (!comp.m_build_done) begin
+      prev = nv_socv_cmdline_processor::enter_build_config_precedence();
       comp.build_phase(phase);
+      nv_socv_cmdline_processor::exit_build_config_precedence(prev);
+    end
     if (ctl != null)
       ctl.adopt_children(comp);
   endfunction
@@ -349,7 +361,7 @@ class pre_domain_controller extends uvm_phase_cb;
 
   // --------------------------------------------------------------------------
   // Adopt pre-tree components that move themselves into their own domain
-  // in their constructor (e.g. nitro_c_wrapper -> nitro_c_phase_domain).
+  // in their constructor (e.g. c_wrapper -> c_phase_domain).
   // Right after the parent's build_phase creates such a component, it is
   // moved back into pre_dom (with its subtree), so it is built and gets
   // all pd_* and pre runtime phases like any other pre-tree component.
@@ -596,6 +608,7 @@ class pre_domain_controller extends uvm_phase_cb;
     // ---------------- pre domain ----------------
     if (phase == pd_build && s == UVM_PHASE_STARTED) begin
       nv_socv_cmdline_processor::refresh_cmdline_for_late_build("the pre-domain build");
+      nv_socv_cmdline_processor::apply_build_settings_for_early_build("the pre-domain build");
       m_pre_build_refreshed = ($time != 0);
     end
     else if (phase == pd_connect && s == UVM_PHASE_STARTED) begin

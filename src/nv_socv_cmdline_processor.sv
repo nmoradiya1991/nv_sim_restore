@@ -830,6 +830,72 @@ class nv_socv_cmdline_processor extends uvm_cmdline_processor;
     endfunction
 
     /**
+     * @brief Apply command-line factory/config settings to a tree built at time 0
+     *        before `uvm_root::build_phase()`.
+     *
+     * @details
+     * UVM applies `+uvm_set_inst_override`, `+uvm_set_type_override`,
+     * `+uvm_set_config_int`, `+uvm_set_config_string` and
+     * `+uvm_set_default_sequence` in `uvm_root::build_phase()`. A tree built
+     * in a domain scheduled before the common build (the pre tree, `pd_build`)
+     * would never see them. Called by the pre-domain controller at the start
+     * of `pd_build`. No-op at non-zero time or if the command line was
+     * refreshed (`refresh_cmdline_for_late_build()` already reapplied them).
+     *
+     * `uvm_root::build_phase()` applies the same settings again later; type
+     * overrides are replaced by identical ones and config settings are
+     * written again with the same values.
+     *
+     * @param who Build about to start; used in the report only.
+     */
+    static function void apply_build_settings_for_early_build(string who);
+        if (($time != 0) || is_cmdline_refreshed())
+            return;
+        `nv_uvm_info("NV_SOCV_CMDLINE_PROCESSOR/EARLY_BUILD",
+                     {"Applying command-line factory/config settings before ", who},
+                     UVM_LOW);
+        apply_factory_settings();
+        apply_config_settings();
+    endfunction
+
+    /** @brief The common-domain "build" node, used for config precedence. */
+    static local uvm_phase m_common_build_node;
+
+    /**
+     * @brief Give config_db sets made from here on standard build-phase precedence.
+     *
+     * @details
+     * `uvm_config_db::set()` lowers a setting's precedence by the depth of its
+     * context only while `uvm_root::m_current_phase` is named "build", so that a
+     * higher-level set (the command line, the test) wins over a lower-level
+     * component's own default. A component built in another domain's build
+     * phase (`pd_build`, `ps_build`) gets default precedence for every set, so
+     * the latest set wins. Called around each such `build_phase()` call, this
+     * points `m_current_phase` at the common "build" node for the duration of
+     * the call.
+     *
+     * @return Previous `m_current_phase`; pass it to `exit_build_config_precedence()`.
+     */
+    static function uvm_phase enter_build_config_precedence();
+        uvm_root root;
+
+        root = uvm_root::get();
+        if (m_common_build_node == null)
+            m_common_build_node = uvm_domain::get_common_domain().find(uvm_build_phase::get());
+        enter_build_config_precedence = root.m_current_phase;
+        if (m_common_build_node != null)
+            root.m_current_phase = m_common_build_node;
+    endfunction
+
+    /**
+     * @brief Restore `uvm_root::m_current_phase` after `enter_build_config_precedence()`.
+     * @param prev Value returned by `enter_build_config_precedence()`.
+     */
+    static function void exit_build_config_precedence(uvm_phase prev);
+        uvm_root::get().m_current_phase = prev;
+    endfunction
+
+    /**
      * @brief Apply report action/severity/verbosity switches to a tree built late.
      *
      * @details

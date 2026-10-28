@@ -18,6 +18,7 @@
 #   VERBOSITY    +UVM_VERBOSITY                       (default UVM_MEDIUM)
 #   ARGS         extra plusargs appended to every run
 #   SAVE_FINISH  1: $finish right after the save      (default 1)
+#   EXTRA_CKPTS  other checkpoint names used by the test (removed by clean)
 #   VCS_EXTRA / XRUN_EXTRA   extra compile options
 # ============================================================================
 
@@ -99,7 +100,7 @@ VCS_CLEAN  = $(or $(SIMV),simv) $(or $(SIMV),simv).daidir csrc ucli.key \
              vc_hdrs.h AN.DB tr_db.log $(or $(CKPT_DIR),ckpt_vcs)
 XRUN_CLEAN = $(or $(XLIB),xcelium.d) xrun.history xrun.key .simvision \
              waves.shm .process_save .xm_dmtcp_env.txt_* \
-             $(CKPT_NAME) $(CKPT_NAME).*
+             $(CKPT_NAME) $(CKPT_NAME).* $(foreach c,$(EXTRA_CKPTS),$(c) $(c).*)
 
 clean:
 	rm -rf $(VCS_CLEAN) $(XRUN_CLEAN) $(LOG_DIR) *.log

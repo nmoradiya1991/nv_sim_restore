@@ -7,6 +7,9 @@
 //   jump_once    : one runtime phase jump out of main_phase
 //   save_point   : request a sim image save (sim_save_restore.sv) and resume
 //                  once the save point is passed
+//   cl_expect    : compare an observed value with +EXP_<key>=<value>
+//   cfg_agent    : phase_logger that takes main_delay (uvm_config_int) and
+//                  profile (uvm_config_string) from uvm_config_db
 // ============================================================================
 
 `timescale 1ns/1ps
@@ -39,6 +42,45 @@ package tests_common_pkg;
 
     static function bit restored();
       return uvm_event_pool::get_global("sim_image_restored").is_on();
+    endfunction
+  endclass
+
+
+  // --------------------------------------------------------------------------
+  // Command-line expectations. check() compares <actual> with
+  // +EXP_<key>=<value> of the current invocation (the restore command line
+  // in a restored run): CL_EXPECT error on a mismatch, info on a match, and
+  // only an info with the observed value without +EXP_<key>.
+  // --------------------------------------------------------------------------
+  class cl_expect;
+    static int unsigned n_checked;
+    static int unsigned n_failed;
+
+    static function void check(string key, string actual, string where = "");
+      string expected;
+      string at = (where == "") ? "" : {" (", where, ")"};
+      if (!$value$plusargs({"EXP_", key, "=%s"}, expected)) begin
+        `uvm_info("CL_EXPECT", $sformatf("%s = %s%s @%0t", key, actual, at, $time), UVM_LOW)
+        return;
+      end
+      n_checked++;
+      if (actual != expected) begin
+        n_failed++;
+        `uvm_error("CL_EXPECT", $sformatf("%s = %s, expected %s%s @%0t",
+                   key, actual, expected, at, $time))
+      end
+      else
+        `uvm_info("CL_EXPECT", $sformatf("%s = %s as expected%s @%0t",
+                  key, actual, at, $time), UVM_NONE)
+    endfunction
+
+    static function void check_int(string key, longint actual, string where = "");
+      check(key, $sformatf("%0d", actual), where);
+    endfunction
+
+    static function void summary();
+      `uvm_info("CL_EXPECT", $sformatf("%0d expectation(s) checked, %0d failed",
+                n_checked, n_failed), UVM_NONE)
     endfunction
   endclass
 
@@ -147,6 +189,31 @@ package tests_common_pkg;
     endfunction
     virtual function void final_phase(uvm_phase phase);
       log(phase);
+    endfunction
+  endclass
+
+
+  // --------------------------------------------------------------------------
+  // phase_logger configured from uvm_config_db, so +uvm_set_config_int /
+  // +uvm_set_config_string and factory overrides can be checked on it.
+  // --------------------------------------------------------------------------
+  class cfg_agent extends phase_logger;
+    `uvm_component_utils(cfg_agent)
+
+    string profile = "default";
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual function void build_phase(uvm_phase phase);
+      uvm_bitstream_t v;
+      super.build_phase(phase);
+      if (uvm_config_int::get(this, "", "main_delay", v))
+        main_delay = v;
+      void'(uvm_config_string::get(this, "", "profile", profile));
+      `uvm_info("CFG", $sformatf("%s (%s) built @%0t: main_delay=%0d profile=%s",
+                get_full_name(), get_type_name(), $time, main_delay, profile), UVM_LOW)
     endfunction
   endclass
 

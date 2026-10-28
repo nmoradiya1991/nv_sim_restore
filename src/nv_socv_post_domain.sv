@@ -66,6 +66,9 @@ typedef class post_domain_controller;
 //    the post tree would never be reached.
 //    ps_build skips components whose build_phase already ran (a parent
 //    called child.build_phase() itself), as UVM does for "build" only.
+//    In ps_build, config_db sets get the standard build-phase precedence
+//    (higher level wins: +uvm_set_config_* over a post-tree component's own
+//    set), as in the common build.
 // --------------------------------------------------------------------------
 `define PSDOM_FUNC_PHASE(CLS, BASE, NAME, METHOD)                             \
 class CLS extends BASE;                                                     \
@@ -89,9 +92,16 @@ class CLS extends BASE;                                                     \
     m_in_traverse = 0;                                                      \
   endfunction                                                               \
   virtual function void exec_func(uvm_component comp, uvm_phase phase);     \
-    if (get_name() == "ps_build" && comp.m_build_done)                      \
+    uvm_phase prev;                                                         \
+    if (get_name() != "ps_build") begin                                     \
+      comp.METHOD(phase);                                                   \
       return;                                                               \
+    end                                                                     \
+    if (comp.m_build_done)                                                  \
+      return;                                                               \
+    prev = nv_socv_cmdline_processor::enter_build_config_precedence();      \
     comp.METHOD(phase);                                                     \
+    nv_socv_cmdline_processor::exit_build_config_precedence(prev);          \
   endfunction                                                               \
 endclass
 
