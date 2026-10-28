@@ -22,8 +22,7 @@ of *that* invocation.
 [Post domain](#-approach-b--post-domain) ·
 [Command line](#-command-line-reprocessing) ·
 [Save / restore](#-save--restore) ·
-[Quick start](#-quick-start-vcs--xcelium) ·
-[Reference](#-reference)
+[Quick start](#-quick-start-vcs--xcelium)
 
 </div>
 
@@ -589,91 +588,5 @@ make restore SIM=xrun POST_TEST=pcie_post_test_b
 | `save` | ◆ B: before `release_post()`, `$finish` |
 | `restore` | `POST_TEST=pcie_post_test_b POST_MAIN=50` |
 | `restore_a` | restore with `pcie_post_test` |
-
-</details>
-
----
-
-## ◆ Reference
-
-### Library plusargs
-
-| Plusarg | Owner | Meaning |
-|:--|:--|:--|
-| `+NV_SOCV_DELAYED_TEST_LAUNCH` | Approach A | gate `run_test()` until `trigger_test_launch()` |
-| `+UVM_TESTNAME=<name>` | pre domain | main test at the release (read after the refresh) |
-| `+PREDOM_ADOPT=<glob,…>` | pre domain | keep domain-aware VIP in `pre_dom` |
-| `+PREDOM_ADOPT_RETURN=<glob,…>` | pre domain | build in `pre_dom`, back to its own domain at the release |
-| `+PREDOM_EXCLUDE=<glob,…>` | pre domain | make matching pre-tree components inert |
-| `+PREDOM_NO_FOREIGN_CB_FILTER` | pre domain | do not hide foreign phase callbacks (UVM-ML) |
-| `+POST_TEST=<name>` | post domain | post test (read again at `ps_build`) |
-| `+POST_GATE_TIMEOUT=<ns>` | post domain | fatal if not released within `<ns>` |
-| `+PSDOM_NO_JUMP_MIRROR` | post domain | do not mirror runtime phase jumps |
-| `+PSDOM_NO_CONNECT_WINDOW` | post domain | do not open the post connect window |
-| `+PSDOM_NO_FOREIGN_CB_FILTER` | post domain | do not hide foreign phase callbacks (UVM-ML) |
-
-### Message IDs
-
-| ID | Severity | Meaning |
-|:--|:--|:--|
-| `NV_SOCV_CMDLINE_PROCESSOR/REPOPULATE` · `/APPEND` · `/OVERRIDE` · `/REAPPLY` · `/LATE_BUILD` | info | what the refresh did and which arguments changed |
-| `NV_SOCV_CMDLINE_PROCESSOR` | fatal | refresh for test launch after `uvm_test_top` exists |
-| `NV_SOCV_CONFIG_DB_TIMEOUT` | warning | `nv_socv_config_db::get()` miss after `TIMEOUT` |
-| `PREDOM/GATE` | info / fatal | main released · gate timeout |
-| `PREDOM/PRE_DOMAIN` | error + fatal | a pre-tree component left `pre_dom` |
-| `PREDOM/PRE_DEFSEQ` | error | `run_phase` default sequence in the pre tree |
-| `PREDOM/NOTEST` · `/INVTST` | fatal | no main test · unknown test type |
-| `PREDOM/ADOPTED` · `/RETURNED` · `/EXCLUDED` | info | adoption / exclusion applied |
-| `PSDOM/GATE` | info / warning / fatal | released · gate timeout |
-| `PSDOM/SKIP` | info | no release before the main runtime phases ended |
-| `PSDOM/SYNC` | info / fatal | runtime phase sync |
-| `PSDOM/JUMP` | info / warning | jump mirrored · not mirrored |
-| `PSDOM/CONNECT` | info | connect window opened / closed |
-| `PSDOM/ILLCRT` | info | `ILLCRT` suppressed for the post tree |
-| `PSDOM/POST_DOMAIN` · `/POST_DEFSEQ` | error / fatal | post-tree domain / default-sequence checks |
-| `PSDOM/LATE` · `/REINSTALL` · `/INVTST` | fatal / warning | install too late · second install · unknown test |
-
-### FAQ
-
-<details>
-<summary><b>Why can't plain UVM do this?</b></summary>
-
-UVM assumes a single topology: one `uvm_test_top`; `build` in the common
-domain at time 0 (`ILLCRT` for anything created later); bindings resolved once
-at `end_of_elaboration`; `config_db` precedence only during build; the command
-line parsed once; global singletons. Domains only separate the *runtime*
-phases. The pre/post domains add their own `build … final` nodes, so a second
-tree gets a full, independent elaboration at any time.
-
-</details>
-
-<details>
-<summary><b>Does the restored run start at time 0?</b></summary>
-
-No. `$time` continues from the save point and late builds run at that time.
-The Approach A gate suppresses `RUNPHSTIME` so `run_test()` may start late;
-the pre domain replaces the root's own `run_phase` with a no-op for the same
-reason.
-
-</details>
-
-<details>
-<summary><b>Which command-line arguments take effect after a restore?</b></summary>
-
-Everything read *after* the refresh: `+UVM_TESTNAME`, `+POST_TEST`, test
-plusargs read in `build_phase` or later, and the `+uvm_set_*`, `+UVM_TIMEOUT`,
-`+UVM_MAX_QUIT_COUNT`, verbosity switches reapplied by
-`reapply_cmdline_settings()`. Values already consumed by objects that existed
-before the save keep their saved state.
-
-</details>
-
-<details>
-<summary><b>Can the main test reset and rerun the boot?</b></summary>
-
-A main-test phase jump does not re-run the pre domain's `pd_*` phases; the pre
-runtime phases follow the jump rules in the
-[pre domain](#-approach-b--pre-domain) table. A reboot must be driven by the
-pre tree itself (for example a boot task that can be re-entered on request).
 
 </details>
