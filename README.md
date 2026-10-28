@@ -475,11 +475,13 @@ make compile VCS_HOME=/path/to/vcs            # vcs not on PATH
 ### Xcelium
 
 Same targets with `SIM=xrun`; compile once per test folder. Save/restore uses
-Xcelium's process-based checkpoint: `-process_save` (with `-64bit`) on the
-elaboration and the simulation, `$save("<name>")` at the save point, then
-`xrun -r <name>` to restore and continue. A Tcl `save -simulation` does not
-work here: it fails with `*E,SVNOCL` once SystemVerilog class objects (the
-UVM tree) exist.
+Xcelium's process-based save/restart mechanism:
+
+| Step | How |
+|:--|:--|
+| Enable | `-process_save` on the elaboration **and** the simulation command line; `-64bit` is recommended with it |
+| Save | `xrun -64bit ... -process_save`; the testbench calls `$save("<name>")` at the save point (here: `+sim_image_save_file=<name>`) |
+| Restore & proceed | `xrun -r <name>` with the same name as the saved checkpoint |
 
 ```bash
 export XCELIUM_HOME=/path/to/XCELIUM<version>  # xrun = $XCELIUM_HOME/tools/bin/xrun
