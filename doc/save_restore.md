@@ -56,9 +56,10 @@ cd tests/post_domain                           # same in delayed_launch and pre_
 export VCS_HOME=/home/tools/vcs/2025.06-SP2-3
 make compile FLOW=dtl                          # static simv_dtl + dynamic post_tb_pkg
 make save    FLOW=dtl                          # static image only; ◆ B, then $finish
-make restore FLOW=dtl POST_TEST=pcie_post_test_b   # loads post_tb_pkg, builds the post test from it
+make restore FLOW=dtl                          # loads post_tb_pkg, builds the post test from it
 make restore_cl FLOW=dtl                       # new overrides of classes of the loaded package
-make compile_pkg FLOW=dtl                      # after editing post_tb_pkg.sv only, then restore again
+make compile_pkg FLOW=dtl TOPO=v2              # new topology of the same post test (or any edit
+make restore FLOW=dtl                          # of post_tb_pkg.sv); same checkpoint, no new save
 ```
 
 Both flows can coexist in one folder: they use separate executables

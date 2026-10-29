@@ -7,8 +7,8 @@ packages:
 | Folder | Static (saved image) | Dynamic (DTL, loaded after the restore) |
 |:--|:--|:--|
 | `delayed_launch` | `dl_if.sv`, `tb_top.sv` | `test_pkg.sv` (all tests) |
-| `pre_domain` | `pre_tb_pkg.sv` (boot pre test), `tb_top.sv` | `main_tb_pkg.sv` (main tests) |
-| `post_domain` | `main_tb_pkg.sv` (main test), `tb_top.sv` | `post_tb_pkg.sv` (post tests) |
+| `pre_domain` | `pre_tb_pkg.sv` (boot pre test), `tb_top.sv` | `main_tb_pkg.sv` (main test `soc_test_a`; `TOPO=v2` adds `env.soc_sb`) |
+| `post_domain` | `main_tb_pkg.sv` (main test), `tb_top.sv` | `post_tb_pkg.sv` (post test `pcie_post_test`; `TOPO=v2` adds `env.pcie_cov`) |
 
 
 ## Targets
@@ -36,15 +36,13 @@ targets (`run_cl*`, `save_cl`, `restore_cl*`) are described in
 
 | Target | What it shows |
 |:--|:--|
-| `run_default` | boot 40 ns, then `soc_test_a` (install default) |
-| `run_cmdline` | main test from `+UVM_TESTNAME=soc_test_b` |
+| `run_default` | boot 40 ns, then `soc_test_a` |
 | `run_pre_long` | `fw_load_agt` main 300 ns: the main `main_phase` waits (synced) |
 | `run_jump_back` | main jumps main → reset; pre waits at the start of `post_main` |
 | `run_jump_fwd` | main jumps main → shutdown; pre runs the skipped phases alone |
 | `run_gate_timeout` | no release: `PREDOM/GATE` fatal at 500 ns |
 | `save` | ◆ A: boot done, gate closed, `$finish` |
-| `restore` | `MAIN_TEST=soc_test_b MAIN_SEED=42` |
-| `restore_a` | restore with `soc_test_a` |
+| `restore` | same test, `MAIN_SEED=42`, plus checked command-line overrides (`CL=0`: off) |
 
 </details>
 
@@ -57,7 +55,6 @@ targets (`run_cl*`, `save_cl`, `restore_cl*`) are described in
 | `run_release_reset` | release in reset: less catch-up, then lockstep |
 | `run_release_late` | release 90 ns into main: main waits for post reset … main |
 | `run_post_long` | post main 300 ns: main `main_phase` waits |
-| `run_post_b` | `+POST_TEST=pcie_post_test_b` (adds `pcie_cov`) |
 | `run_tb_release` | released from `tb_top` (module code) at 50 ns |
 | `run_norelease` | never released: post domain skipped |
 | `run_gate_timeout` | never released + `+POST_GATE_TIMEOUT=60`: fatal |
@@ -65,7 +62,6 @@ targets (`run_cl*`, `save_cl`, `restore_cl*`) are described in
 | `run_jump_post_back` | post jump, mirrored on main |
 | `run_jump_nomirror` | `+PSDOM_NO_JUMP_MIRROR` |
 | `save` | ◆ B: before `release_post()`, `$finish` |
-| `restore` | `POST_TEST=pcie_post_test_b POST_MAIN=50` |
-| `restore_a` | restore with `pcie_post_test` |
+| `restore` | same post test, `POST_MAIN=50`, plus checked command-line overrides (`CL=0`: off) |
 
 </details>

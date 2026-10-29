@@ -1,5 +1,5 @@
 // ============================================================================
-// main_tb_pkg.sv -- Approach B, pre domain: the main tests, built when the
+// main_tb_pkg.sv -- Approach B, pre domain: the main test, built when the
 // boot calls release_main(). DYNAMIC in the DTL flow: not in the saved
 // image, loaded after the restore with +dtl_add_pkg=<dir>:main_tb_pkg.
 //
@@ -7,7 +7,11 @@
 //     env.cpu_agt : cpu_agent, main_delay <MAIN_MAIN> (100) set by the env
 //     env.ddr_agt : ddr_agent, main_delay half of that
 //     env.hb
-//   soc_test_b: soc_test_a + env.soc_sb, cpu main <MAIN_MAIN> x 2
+//     env.soc_sb  : only with +define+TOPO_V2 (make ... TOPO=v2)
+//
+// TOPO_V2 changes the topology of the same test. With FLOW=dtl, rebuild just
+// this package (make compile_pkg FLOW=dtl TOPO=v2) and restore the same
+// checkpoint: the main test is built with the new topology.
 //
 // Pre runtime phases not finished at the release are synced with the main
 // test's (PREDOM/SYNC); phase_logger "... ENDED" lines show the sync.
@@ -34,6 +38,12 @@ package main_tb_pkg;
   import nv_socv_sim_restore_pkg::*;
   import tests_common_pkg::*;
   `include "uvm_macros.svh"
+
+`ifdef TOPO_V2
+  localparam string TOPO = "v2";
+`else
+  localparam string TOPO = "v1";
+`endif
 
   // --------------------------------------------------------------------------
   // Agents (factory override targets).
@@ -90,7 +100,6 @@ package main_tb_pkg;
   class soc_env extends uvm_env;
     `uvm_component_utils(soc_env)
 
-    bit            has_sb;
     int unsigned   main_ns = 100;
     string         profile = "default";
     cpu_agent      cpu_agt[2];
@@ -104,14 +113,15 @@ package main_tb_pkg;
 
     virtual function void build_phase(uvm_phase phase);
       void'(uvm_config_string::get(this, "", "profile", profile));
-      uvm_config_int::set(this, "cpu_agt", "main_delay", main_ns);
+      uvm_config_int::set(this, "cpu_agt*", "main_delay", main_ns);
       uvm_config_int::set(this, "ddr_agt", "main_delay", main_ns / 2);
       cpu_agt[0] = cpu_agent::type_id::create("cpu_agt[0]", this);
       cpu_agt[1] = cpu_agent::type_id::create("cpu_agt[1]", this);
       ddr_agt = ddr_agent::type_id::create("ddr_agt", this);
       hb      = heartbeat::type_id::create("hb", this);
-      if (has_sb)
-        soc_sb = soc_scoreboard::type_id::create("soc_sb", this);
+`ifdef TOPO_V2
+      soc_sb  = soc_scoreboard::type_id::create("soc_sb", this);
+`endif
     endfunction
   endclass
 
@@ -126,9 +136,6 @@ package main_tb_pkg;
       super.new(name, parent);
     endfunction
 
-    virtual function void configure_env();
-    endfunction
-
     virtual function void build_phase(uvm_phase phase);
       string       jump_to;
       int unsigned jump_at = 50;
@@ -139,9 +146,8 @@ package main_tb_pkg;
 
       env = soc_env::type_id::create("env", this);
       void'($value$plusargs("MAIN_MAIN=%d", env.main_ns));
-      configure_env();
-      `uvm_info("MAIN", $sformatf("%s built @%0t (%s), seed=%0d", get_type_name(),
-                $time, (save_point::restored() ? "restored run" : "fresh run"), seed),
+      `uvm_info("MAIN", $sformatf("%s built @%0t (%s), seed=%0d, topology %s", get_type_name(),
+                $time, (save_point::restored() ? "restored run" : "fresh run"), seed, TOPO),
                 UVM_NONE)
     endfunction
 
@@ -159,17 +165,6 @@ package main_tb_pkg;
 
     virtual function void report_phase(uvm_phase phase);
       cl_expect::summary();
-    endfunction
-  endclass
-
-  class soc_test_b extends soc_test_a;
-    `uvm_component_utils(soc_test_b)
-    function new(string name, uvm_component parent);
-      super.new(name, parent);
-    endfunction
-    virtual function void configure_env();
-      env.has_sb  = 1;
-      env.main_ns = env.main_ns * 2;
     endfunction
   endclass
 

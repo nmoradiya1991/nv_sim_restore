@@ -52,12 +52,14 @@ Optional make variables:
 | `SAVE_FINISH` | `1` | `$finish` right after the save |
 | `VCS_EXTRA` / `XRUN_EXTRA` | — | extra compile options |
 | `DTL_ELAB_OPTS` | `-full64 -sverilog +vcs+lic+wait` | `FLOW=dtl`: options of both elaborations (must match) |
+| `TOPO` | `v1` | `v2`: `pre_domain` / `post_domain` compile the package built after the save point with `+define+TOPO_V2`, a different topology of the same test |
+| `CL` | `1` | `pre_domain` / `post_domain`: `make restore` also passes and checks command-line overrides; `0`: off |
 
 Logs go to `tests/<folder>/logs/<target>_<sim>[_dtl].log`.
 
 ## Compile and run
 
-The commands are the same in every test folder; only the test-selection variables differ.
+The commands are the same in every test folder.
 
 ```bash
 cd tests/post_domain            # or delayed_launch, pre_domain
@@ -69,13 +71,24 @@ make restore                    # restore and continue with a new command line
 make clean
 ```
 
-| Folder | Save point | Select the test on restore |
-|:--|:--|:--|
-| `delayed_launch` | A: boot done, no UVM tree | `make restore TEST=dl_test_b DL_MODE=7 N_ITEMS=8` |
-| `pre_domain` | A: boot done, main test not built | `make restore MAIN_TEST=soc_test_b MAIN_SEED=42` |
-| `post_domain` | B: main test running, post test not built | `make restore POST_TEST=pcie_post_test_b POST_MAIN=50` |
+| Folder | Save point | Built after the restore | Restore example |
+|:--|:--|:--|:--|
+| `delayed_launch` | A: boot done, no UVM tree | the whole UVM test | `make restore TEST=dl_test_b DL_MODE=7 N_ITEMS=8` |
+| `pre_domain` | A: boot done, main test not built | main test `soc_test_a` | `make restore MAIN_SEED=42` |
+| `post_domain` | B: main test running, post test not built | post test `pcie_post_test` | `make restore POST_MAIN=50` |
 
 In `delayed_launch`, use `run_delayed` instead of `run_default`.
+
+In `pre_domain` and `post_domain` the restore keeps the same test. The new
+command line changes how its tree is built, and the dynamic package (`TOPO`)
+changes its topology. `make restore` also passes factory overrides and
+`config_db` settings for the tree built after the restore, and checks that
+they took effect (`CL_EXPECT` lines in the log). `CL=0` turns this off:
+
+| Folder | Command-line settings checked on `make restore` (`CL=1`, default) |
+|:--|:--|
+| `pre_domain` | `cpu_agent` → `cpu_agent_fast` (type), `env.ddr_agt` → `ddr_agent_lp` (instance), `cpu_agt` `main_delay` 250 over the env's own set, env `profile` `perf` |
+| `post_domain` | `pcie_driver` → `pcie_driver_fast` (type), `env.pcie_sb` → `pcie_scoreboard_strict` (instance), `pcie_agt` `main_delay` 77 over the env's `POST_MAIN` set, env `profile` `gen5`; main tree: `post_window` 40 re-read and `soc_txn` → `soc_txn_ext` for an object created after the release |
 
 ### Xcelium
 
@@ -95,7 +108,8 @@ export VCS_HOME=/home/tools/vcs/2025.06-SP2-3
 make compile FLOW=dtl           # static simv_dtl + dynamic package
 make save    FLOW=dtl
 make restore FLOW=dtl
-make compile_pkg FLOW=dtl       # after editing only the dynamic package; then restore again
+make compile_pkg FLOW=dtl TOPO=v2   # new topology of the same test: rebuild the package only,
+make restore FLOW=dtl               # then restore the SAME checkpoint; no new save needed
 ```
 
 `run_*` targets are not available with `FLOW=dtl`. See
@@ -104,45 +118,100 @@ make compile_pkg FLOW=dtl       # after editing only the dynamic package; then r
 ## What to expect after a restore
 
 In every folder, `make save` stops at the save point, before the part of the
-testbench that varies per test exists. `make restore` then builds that part
-from the **new** command line, with no recompile. The excerpts below are from
-VCS runs with the default restore variables (paths trimmed; times are in fs,
-so `@50000000` = 50 ns).
+testbench built after it exists. `make restore` then builds that part from
+the **new** command line, with no recompile. The excerpts below are from the
+VCS runs of
 
-**`FLOW=std` and `FLOW=dtl` produce the same restore log.** The only extra
-line in DTL is the dynamic package load, right after the restore:
+```bash
+make -C delayed_launch compile save_cl restore_cl FLOW=std|dtl
+make -C pre_domain     compile save    restore    FLOW=std|dtl
+make -C post_domain    compile save    restore    FLOW=std|dtl
+```
+
+(paths and `UVM_INFO <file> @ <time>: <component>` prefixes trimmed; times
+are in fs, so `@50000000` = 50 ns).
+
+**`FLOW=std` and `FLOW=dtl` produce the same restore log.** In all three
+folders the DTL log has exactly one extra line, the dynamic package load
+right after the restore:
 
 ```
 <50001000> SIM_IMAGE: simulation restored
 <50001000> SIM_IMAGE: $dtl_load (+dtl_add_pkg=DTL_main_tb_pkg:main_tb_pkg)
 ```
 
-Every restore ends with `UVM_ERROR : 0` and `UVM_FATAL : 0`.
+Every restore ends with `UVM_ERROR : 0`, `UVM_FATAL : 0` and
+`[CL_EXPECT] <n> expectation(s) checked, 0 failed`.
 
-### delayed_launch: the whole UVM test is chosen after the restore
+> [!IMPORTANT]
+> **With DTL, one checkpoint serves any number of testbench versions.**
+>
+> The checkpoint holds only the static image. The dynamic package
+> (`test_pkg`, `main_tb_pkg` or `post_tb_pkg`) is loaded fresh on every
+> restore. You can edit it (add or remove agents, scoreboards and
+> coverage, change the topology of the same test), recompile **only that
+> package**, and restore the **same snapshot** again. No new save, no
+> rerun of the boot or the main test up to the save point.
+>
+> ```bash
+> make compile save restore FLOW=dtl        # once: save; restore with topology v1
+> make compile_pkg FLOW=dtl TOPO=v2         # seconds: rebuilds just the dynamic package
+> make restore FLOW=dtl                     # same checkpoint, same test, topology v2
+> ```
+>
+> `TOPO=v2` is a ready-made example of such a change: the same test builds
+> one more component (`soc_sb` in `pre_domain`, `pcie_cov` in
+> `post_domain`). Any edit of the package works the same way.
+>
+> With `FLOW=std`, the testbench code is frozen inside the checkpoint, so any
+> change to it needs a recompile and a new save. The only rule with DTL is
+> that the static part (`static.f`: `tb_top`, the DUT, and the packages
+> already alive at the save point) must not change. If it does, rerun
+> `make compile save FLOW=dtl`.
 
-Save (131 ns): the boot is done in plain SystemVerilog, and no UVM topology exists yet.
+### delayed_launch: the whole UVM test is built after the restore
+
+Save (`save_cl`, 131 ns): the boot is done in plain SystemVerilog and no UVM
+topology exists. The save command line carries **stale** settings
+(`+uvm_set_type_override=dl_driver,dl_driver_slow`, `n_items` 2, profile
+`stale`):
 
 ```
 [tb_top] @131000000 boot done: 16 firmware words loaded
 [SAVEPT] save point A (boot done, no UVM topology): requesting a sim image save @131000000
+<131000000> SIM_IMAGE: saving checkpoint ckpt_vcs/dl_ckpt_cl.chk
 ```
 
-Restore (`TEST=dl_test_b DL_MODE=7 N_ITEMS=8`): the command line is
-repopulated and `run_test()` launches only now, picking up the test name,
-config and `nv_socv_config_db` values from the restore command line:
+Restore (`restore_cl`): the command line is **repopulated** (there is no
+`uvm_test_top` yet), so the stale settings are gone. `run_test()` launches
+only now, and UVM applies the restore command line as if it were time 0:
 
 ```
 [NV_SOCV_CMDLINE_PROCESSOR/REPOPULATE] Command line repopulated
 [NV_SOCV_DELAYED_TEST_LUNCH] Test launch event triggered
 [RNTST] Running test dl_test_b...
-[UVM_CMDLINE_PROC] Applying config setting from the command line: +uvm_set_config_int=uvm_test_top.env.drv,n_items,8
-[TEST] dl_test_b built @131000000 (restored run), dl_mode=7
-[DRV] dl_driver built @131000000, n_items=8 gap=1
-[CHK] dl_checker: 8 words on the pins, as driven
+[INSTOVR] Applying instance override from the command line: +uvm_set_inst_override=dl_checker,dl_checker_strict,uvm_test_top.env.chk
+[UVM_CMDLINE_PROC] Applying type override from the command line: +uvm_set_type_override=dl_driver,dl_driver_fast
+[UVM_CMDLINE_PROC] Applying config setting from the command line: +uvm_set_config_int=uvm_test_top.env.drv,n_items,12
+[UVM_CMDLINE_PROC] Applying config setting from the command line: +uvm_set_config_string=uvm_test_top.env,profile,stress
+[TEST] dl_test_b built @131000000 (restored run), dl_mode=1
+[DRV] dl_driver_fast built @131000000, n_items=12 gap=0
+
+uvm_test_top  dl_test_b
+  env         dl_env
+    chk       dl_checker_strict
+    drv       dl_driver_fast
+
+[CL_EXPECT] DRV_TYPE = dl_driver_fast as expected (factory type override)
+[CL_EXPECT] CHK_TYPE = dl_checker_strict as expected (factory instance override)
+[CL_EXPECT] N_ITEMS = 12 as expected (config_int vs env default)
+[CL_EXPECT] PROFILE = stress as expected (config_string)
+[DRV] 12 words driven, done @157000000
+[CHK] dl_checker_strict: 12 words on the pins, as driven
+[CL_EXPECT] 4 expectation(s) checked, 0 failed
 ```
 
-### pre_domain: the boot tree is saved, the main test is chosen after the restore
+### pre_domain: the boot tree is saved, the main test is built after the restore
 
 Save (50 ns): `uvm_pre_top` (the boot test in the `pre_dom` domain) is built
 at time 0 and is in the middle of its `main` phase. `uvm_test_top` does not
@@ -154,32 +223,61 @@ exist yet.
 [SAVEPT] save point A (boot done, main test not built): requesting a sim image save @50000000
 ```
 
-Restore (`MAIN_TEST=soc_test_b MAIN_SEED=42`): the gate releases the main
-test, the command line is reprocessed, and `soc_test_b` is built at 50 ns:
+Restore: the gate releases the main test. The library repopulates the
+command line from the restore invocation and reapplies the UVM settings, then
+the same test, `soc_test_a`, is built at 50 ns with them:
 
 ```
 [PREDOM/GATE] Main test released: boot done after 40 ns, restored run
-[NV_SOCV_CMDLINE_PROCESSOR/LATE_BUILD] Reprocessing command line before the main-test build
+[NV_SOCV_CMDLINE_PROCESSOR/LATE_BUILD] Reprocessing command line before the main-test build at 50001000
 [NV_SOCV_CMDLINE_PROCESSOR/REPOPULATE] Command line repopulated
+[NV_SOCV_CMDLINE_PROCESSOR/REAPPLY] Applying instance override: +uvm_set_inst_override=ddr_agent,ddr_agent_lp,uvm_test_top.env.ddr_agt
+[NV_SOCV_CMDLINE_PROCESSOR/REAPPLY] Applying type override: +uvm_set_type_override=cpu_agent,cpu_agent_fast
+[NV_SOCV_CMDLINE_PROCESSOR/REAPPLY] Applying config int: +uvm_set_config_int=uvm_test_top.env.cpu_agt*,main_delay,250
+[NV_SOCV_CMDLINE_PROCESSOR/REAPPLY] Applying config string: +uvm_set_config_string=uvm_test_top.env,profile,perf
 [NV_SOCV_CMDLINE_PROCESSOR/REAPPLY] UVM command-line settings reapplied
-[PREDOM] Running test soc_test_b
-[MAIN] soc_test_b built @50000000 (restored run), seed=42
+[PREDOM] Running test soc_test_a
+[MAIN] soc_test_a built @50000000 (restored run), seed=42, topology v1
 ```
 
-The topology now shows both trees: the restored boot tree and the new main
-tree. The boot tree continues from where it was saved: its `main` phase ends
-at 70 ns, while the main test runs its own phases from 50 ns. Both report at
-the end (160 ns).
+The topology shows both trees: the boot tree restored from the checkpoint,
+and the main tree built after the restore with the overridden types. The
+boot tree continues from where it was saved: its `main` phase ends at 70 ns,
+while the main test runs its own phases from 50 ns.
 
 ```
 uvm_pre_top      boot_pre_test      <- from the checkpoint
   env            boot_env
-uvm_test_top     soc_test_b         <- built after the restore
+    clk_rst_agt  phase_logger
+    fw_load_agt  fw_load_agent
+    hb           heartbeat
+uvm_test_top     soc_test_a         <- built after the restore
   env            soc_env
-    cpu_agt[0..1], ddr_agt, hb, soc_sb
+    cpu_agt[0]   cpu_agent_fast
+    cpu_agt[1]   cpu_agent_fast
+    ddr_agt      ddr_agent_lp
+    hb           heartbeat          (TOPO=v2: + soc_sb  soc_scoreboard)
+
+[CL_EXPECT] CPU_TYPE = cpu_agent_fast as expected (main tree, type override)
+[CL_EXPECT] DDR_TYPE = ddr_agent_lp as expected (main tree, instance override)
+[CL_EXPECT] CPU_MAIN = 250 as expected (main tree, config_int vs env default)
+[CL_EXPECT] PROFILE = perf as expected (main tree, config_string)
+[CL_EXPECT] 4 expectation(s) checked, 0 failed
 ```
 
-### post_domain: the main test is saved, the post test is chosen after the restore
+`CPU_MAIN` checks that the command-line `main_delay` wins over the env's own
+`config_db` set (100) for a tree built at non-zero time.
+
+With `make compile_pkg FLOW=dtl TOPO=v2` and the same checkpoint, the same
+test is built with the scoreboard added:
+
+```
+[MAIN] soc_test_a built @50000000 (restored run), seed=42, topology v2
+    soc_sb       soc_scoreboard     <- new in the topology
+[SB] soc_sb run_phase @50000000
+```
+
+### post_domain: the main test is saved, the post test is built after the restore
 
 Save (40 ns): `uvm_test_top` (the main test) is running its `main` phase. The
 post domain is installed, but its tree is not built.
@@ -189,31 +287,75 @@ post domain is installed, but its tree is not built.
 [SAVEPT] save point B (post domain not built): requesting a sim image save @40000000
 ```
 
-Restore (`POST_TEST=pcie_post_test_b POST_MAIN=50`): the new arguments are
-**merged** into the existing command line (the main tree is already built),
-the post test is replaced, and `uvm_post_top` is built during the main
-`main_phase`:
+Restore: the main tree already exists, so the restore arguments are
+**merged** into the command line and reapplied. They reach both trees: the
+main tree restored from the checkpoint re-reads `post_window` and creates an
+object with the `soc_txn_ext` override, and the same post test,
+`pcie_post_test`, is built during the main `main_phase`:
 
 ```
 [PSDOM/GATE] Post domain released: main main_phase + 30 ns, restored run
+[NV_SOCV_CMDLINE_PROCESSOR/LATE_BUILD] Reprocessing command line before the post-domain build at 40001000
 [NV_SOCV_CMDLINE_PROCESSOR/APPEND] Command-line args merged
+[NV_SOCV_CMDLINE_PROCESSOR/REAPPLY] Applying instance override: +uvm_set_inst_override=pcie_scoreboard,pcie_scoreboard_strict,uvm_post_top.env.pcie_sb
+[NV_SOCV_CMDLINE_PROCESSOR/REAPPLY] Applying type override: +uvm_set_type_override=pcie_driver,pcie_driver_fast
+[NV_SOCV_CMDLINE_PROCESSOR/REAPPLY] Applying type override: +uvm_set_type_override=soc_txn,soc_txn_ext
+[NV_SOCV_CMDLINE_PROCESSOR/REAPPLY] Applying config int: +uvm_set_config_int=uvm_post_top.env.pcie_agt,main_delay,77
+[NV_SOCV_CMDLINE_PROCESSOR/REAPPLY] Applying config int: +uvm_set_config_int=uvm_test_top.env,post_window,40
+[NV_SOCV_CMDLINE_PROCESSOR/REAPPLY] Applying config string: +uvm_set_config_string=uvm_post_top.env,profile,gen5
 [NV_SOCV_CMDLINE_PROCESSOR/REAPPLY] UVM command-line settings reapplied
-[PSDOM] +POST_TEST=pcie_post_test_b replaces post test pcie_post_test
-[POST] pcie_post_test_b built @40000000 (restored run)
-[CFG] uvm_post_top.env.pcie_agt (pcie_agent) built @40000000: main_delay=50 profile=default
-[PSDOM/ILLCRT] 27 post-tree component(s) created after the main build; ILLCRT suppressed for them
-[PSDOM/SYNC] Post runtime phases synced with the uvm domain (main is in 'main'). ...
+[PSDOM] Running post test pcie_post_test
+[ENV] post domain started @40000000
+[CL_EXPECT] POST_WINDOW = 40 as expected (main tree, config re-read after the release)
+[CL_EXPECT] TXN_TYPE = soc_txn_ext as expected (main tree, object created after the release)
+[POST] pcie_post_test built @40000000 (restored run), topology v1
+[CFG] uvm_post_top.env.pcie_agt (pcie_agent) built @40000000: main_delay=77 profile=default
+[PSDOM/ILLCRT] 25 post-tree component(s) created after the main build; ILLCRT suppressed for them
+```
+
+The post topology has the overridden driver and scoreboard; `main_delay` 77
+wins over the env's own `POST_MAIN` set (50):
+
+```
+uvm_post_top               pcie_post_test
+  env                      pcie_env
+    hb                     heartbeat
+    pcie_agt               pcie_agent
+    pcie_bus               pcie_bus_agent
+      drv                  pcie_driver_fast
+      sqr                  uvm_sequencer
+    pcie_sb                pcie_scoreboard_strict
+                           (TOPO=v2: + pcie_cov  pcie_coverage)
+
+[CL_EXPECT] DRV_TYPE = pcie_driver_fast as expected (post tree, type override)
+[CL_EXPECT] SB_TYPE = pcie_scoreboard_strict as expected (post tree, instance override)
+[CL_EXPECT] PCIE_MAIN = 77 as expected (post tree, config_int vs env default)
+[CL_EXPECT] PROFILE = gen5 as expected (post tree, config_string)
 ```
 
 The post tree runs the runtime phases that the main test has already finished
 back to back, then moves in step with it. Both `main` phases end together at
-110 ns, and the post checks run in the same simulation:
+127 ns, and the post checks run in the same simulation:
 
 ```
-[PCIE_SB] pcie_scoreboard: 3 responses, as expected
-[MAIN] post domain: released at ..., skipped=0, synced=1, jumps mirrored=0
+[PSDOM/SYNC] Post runtime phases synced with the uvm domain (main is in 'main'). ...
+[PHASE] main ENDED                   @127000000  domain=post_dom
+[PHASE] main ENDED                   @127000000  domain=uvm
+[PCIE_SB] pcie_scoreboard_strict: 3 responses, as expected
+[MAIN] post domain: released at 40001000000000, skipped=0, synced=1, jumps mirrored=0
+[CL_EXPECT] 6 expectation(s) checked, 0 failed
 ```
 
-The report catcher shows `caught UVM_FATAL reports : 27`. These are the
-ILLCRT (component created after build) fatals for the 27 post-tree
-components, caught on purpose; the final summary has `UVM_FATAL : 0`.
+The report catcher shows `caught UVM_FATAL reports : 25`, the same number as
+the `PSDOM/ILLCRT` line. These are the ILLCRT (component created after build)
+fatals for the post-tree components, caught on purpose; the final summary has
+`UVM_FATAL : 0`.
+
+With `make compile_pkg FLOW=dtl TOPO=v2` and the same checkpoint, the same
+post test is built with the coverage collector added:
+
+```
+[POST] pcie_post_test built @40000000 (restored run), topology v2
+    pcie_cov               pcie_coverage           <- new in the topology
+[PCIE_COV] data_cg ...%
+```

@@ -1,5 +1,5 @@
 // ============================================================================
-// post_tb_pkg.sv -- Approach B, post domain: the post tests, built at
+// post_tb_pkg.sv -- Approach B, post domain: the post test, built at
 // release_post() during the main test, runtime phases synced. DYNAMIC in the
 // DTL flow: not in the saved image, loaded after the restore with
 // +dtl_add_pkg=<dir>:post_tb_pkg.
@@ -9,7 +9,12 @@
 //     env.pcie_bus : sequencer + driver, connected in ps_connect
 //     env.pcie_sb  : counts the bus responses, checks them
 //     env.hb       : ps_run heartbeat
-//   pcie_post_test_b: pcie_post_test + env.pcie_cov (covergroup on the items)
+//     env.pcie_cov : covergroup on the items, only with +define+TOPO_V2
+//                    (make ... TOPO=v2)
+//
+// TOPO_V2 changes the topology of the same test. With FLOW=dtl, rebuild just
+// this package (make compile_pkg FLOW=dtl TOPO=v2) and restore the same
+// checkpoint: the post test is built with the new topology.
 //
 // Command-line reprocessing targets: settings applied when the post tree is
 // built (release, non-zero time; after a restore: merged with the save
@@ -32,6 +37,12 @@ package post_tb_pkg;
   import nv_socv_sim_restore_pkg::*;
   import tests_common_pkg::*;
   `include "uvm_macros.svh"
+
+`ifdef TOPO_V2
+  localparam string TOPO = "v2";
+`else
+  localparam string TOPO = "v1";
+`endif
 
   // --------------------------------------------------------------------------
   // Post test.
@@ -179,7 +190,6 @@ package post_tb_pkg;
   class pcie_env extends uvm_env;
     `uvm_component_utils(pcie_env)
 
-    bit             has_cov;
     string          profile = "default";
     pcie_agent      pcie_agt;
     pcie_bus_agent  pcie_bus;
@@ -200,8 +210,9 @@ package post_tb_pkg;
       pcie_bus = pcie_bus_agent::type_id::create("pcie_bus", this);
       pcie_sb  = pcie_scoreboard::type_id::create("pcie_sb", this);
       hb       = heartbeat::type_id::create("hb", this);
-      if (has_cov)
-        pcie_cov = pcie_coverage::type_id::create("pcie_cov", this);
+`ifdef TOPO_V2
+      pcie_cov = pcie_coverage::type_id::create("pcie_cov", this);
+`endif
     endfunction
 
     virtual function void connect_phase(uvm_phase phase);
@@ -222,9 +233,6 @@ package post_tb_pkg;
       super.new(name, parent);
     endfunction
 
-    virtual function void configure_env();
-    endfunction
-
     virtual function void build_phase(uvm_phase phase);
       string       jump_to;
       int unsigned jump_at = 10;
@@ -233,9 +241,8 @@ package post_tb_pkg;
       jmp = new("post", jump_to, jump_at);
 
       env = pcie_env::type_id::create("env", this);
-      configure_env();
-      `uvm_info("POST", $sformatf("%s built @%0t (%s)", get_type_name(), $time,
-                (save_point::restored() ? "restored run" : "fresh run")), UVM_NONE)
+      `uvm_info("POST", $sformatf("%s built @%0t (%s), topology %s", get_type_name(), $time,
+                (save_point::restored() ? "restored run" : "fresh run"), TOPO), UVM_NONE)
     endfunction
 
     virtual function void end_of_elaboration_phase(uvm_phase phase);
@@ -255,16 +262,6 @@ package post_tb_pkg;
       end
       jmp.run(this, phase);
     endtask
-  endclass
-
-  class pcie_post_test_b extends pcie_post_test;
-    `uvm_component_utils(pcie_post_test_b)
-    function new(string name, uvm_component parent);
-      super.new(name, parent);
-    endfunction
-    virtual function void configure_env();
-      env.has_cov = 1;
-    endfunction
   endclass
 
 endpackage

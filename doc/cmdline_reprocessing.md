@@ -66,11 +66,11 @@ settings, and the **restore run** gets *new* ones. The `restore_cl_drop` and
 | | `restore_cl` | the `run_cl` settings | all 4 applied, stale ones gone (**repopulate**: no `uvm_test_top` yet) |
 | | `restore_cl_drop` | only `+UVM_TESTNAME=dl_test_b` | `dl_driver`, `dl_checker`, 4, `default` |
 | `pre_domain` | `run_cl_pre` | type `fw_load_agent→fw_load_agent_fast`, `uvm_pre_top.env.fw_load_agt main_delay=90` (no save) | fast, 90 |
-| | `run_cl_main` | `+UVM_TESTNAME=soc_test_b`, type `cpu_agent→cpu_agent_fast`, inst `uvm_test_top.env.ddr_agt→ddr_agent_lp`, `cpu_agt main_delay=250` (env sets 200), `profile=perf` | all 4 applied |
+| | `run_cl_main` | type `cpu_agent→cpu_agent_fast`, inst `uvm_test_top.env.ddr_agt→ddr_agent_lp`, `cpu_agt main_delay=250` (env sets 100), `profile=perf` | all 4 applied |
 | | `save_cl` | saved before the main build; stale: `cpu_agent→cpu_agent_slow`, `main_delay=5`, `profile=stale` | — |
 | | `restore_cl` | the `run_cl_main` settings | all 4 applied, stale ones gone (repopulate) |
-| | `restore_cl_drop` | only `+UVM_TESTNAME=soc_test_b` | `cpu_agent`, `ddr_agent`, 200, `default` |
-| `post_domain` | `run_cl` | `+POST_TEST=pcie_post_test_b`, type `pcie_driver→pcie_driver_fast`, inst `uvm_post_top.env.pcie_sb→pcie_scoreboard_strict`, `pcie_agt main_delay=77` (pcie env sets 20), `profile=gen5`; main tree: `uvm_test_top.env post_window=40` and type `soc_txn→soc_txn_ext`, both used by the main env **after the release** | all 6 applied |
+| | `restore_cl_drop` | none | `cpu_agent`, `ddr_agent`, 100, `default` |
+| `post_domain` | `run_cl` | type `pcie_driver→pcie_driver_fast`, inst `uvm_post_top.env.pcie_sb→pcie_scoreboard_strict`, `pcie_agt main_delay=77` (pcie env sets 20), `profile=gen5`; main tree: `uvm_test_top.env post_window=40` and type `soc_txn→soc_txn_ext`, both used by the main env **after the release** | all 6 applied |
 | | `save_cl` | save point B (before the release); stale: `pcie_driver→pcie_driver_slow`, post `profile=stale`, `post_window=1` | — |
 | | `restore_cl` | the `run_cl` settings | all 6 applied; each new setting wins over the stale one (**merge**: `uvm_test_top` exists, entries replayed in order) |
 | | `restore_cl_keep` | none | stale ones persist: `pcie_driver_slow`, `pcie_scoreboard`, 20, `stale`, `post_window=1`, `soc_txn` |

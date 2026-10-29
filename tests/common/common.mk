@@ -18,8 +18,8 @@
 #                  then the dynamic package $(DTL_PKG): vlogan $(DTL_PKG).sv;
 #                  vcs -partcomp $(DTL_PKG) -dynamic_tb -sharedlib=DTL_STATIC
 #                  -dir=DTL_$(DTL_PKG)
-#     compile_pkg  the dynamic package only (after editing it; the saved
-#                  checkpoints stay valid)
+#     compile_pkg  the dynamic package only (after editing it, or with
+#                  TOPO=v1|v2; the saved checkpoints stay valid)
 #     save         ./simv_dtl ... (static image only), into ckpt_vcs_dtl/
 #     restore      ./simv_dtl -r ... +dtl_add_pkg=DTL_$(DTL_PKG):$(DTL_PKG);
 #                  sim_save_restore.sv calls $dtl_load right after the restore
@@ -37,6 +37,11 @@
 #   VCS_EXTRA / XRUN_EXTRA   extra compile options
 #   DTL_ELAB_OPTS  FLOW=dtl: vcs options of BOTH elaborations (must match,
 #                  else DTL-SHLIB-ERR)  (default -full64 -sverilog +vcs+lic+wait)
+#   TOPO         v1 | v2: v2 compiles the testbench with +define+TOPO_V2 (a
+#                different topology of the same test, in the package built
+#                after the save point). FLOW=dtl: only the dynamic package
+#                gets it, so make compile_pkg FLOW=dtl TOPO=v2 is enough and
+#                the existing checkpoint is reused       (default v1)
 # ============================================================================
 
 COMMON_DIR  := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
@@ -49,6 +54,12 @@ LOG_DIR     ?= logs
 VERBOSITY   ?= UVM_MEDIUM
 SAVE_FINISH ?= 1
 UVM_VER     ?= uvm-1.2
+TOPO        ?= v1
+
+ifeq ($(filter v1 v2,$(TOPO)),)
+  $(error TOPO must be v1 or v2, got '$(TOPO)')
+endif
+TOPO_DEFS := $(if $(filter v2,$(TOPO)),+define+TOPO_V2)
 
 ifeq ($(filter std dtl,$(FLOW)),)
   $(error FLOW must be std or dtl, got '$(FLOW)')
@@ -79,7 +90,7 @@ ifeq ($(SIM),vcs)
 
   COMPILE_CMD = $(VCS_BIN) -full64 -sverilog -ntb_opts $(UVM_VER) \
                 -timescale=1ns/1ps -debug_access+all +vcs+lic+wait \
-                -top $(TOP) $(LIB_FILES) $(TB_FILES) $(VCS_EXTRA) -o $(SIMV)
+                -top $(TOP) $(TOPO_DEFS) $(LIB_FILES) $(TB_FILES) $(VCS_EXTRA) -o $(SIMV)
   RUN_CMD     = ./$(SIMV) $(SIM_ARGS)
   SAVE_CMD    = mkdir -p $(CKPT_DIR) && ./$(SIMV) $(SIM_ARGS) \
                 +sim_image_save_enable +sim_image_save_dir_path=$(CKPT_DIR) \
@@ -101,7 +112,7 @@ ifeq ($(SIM),vcs)
   DTL_ELAB_STATIC = $(DTL_ELAB_OPTS) -top $(TOP) -partcomp -dir=DTL_STATIC \
                     -enable_dynamic_tb $(DTL_UVM_DIR)/dpi/uvm_dpi.cc -CFLAGS -DVCS \
                     -o $(SIMV)
-  DTL_AN_PKG      = $(DTL_AN_OPTS) +incdir+$(LIB_DIR)/src +incdir+$(COMMON_DIR) \
+  DTL_AN_PKG      = $(DTL_AN_OPTS) $(TOPO_DEFS) +incdir+$(LIB_DIR)/src +incdir+$(COMMON_DIR) \
                     $(DTL_PKG).sv
   DTL_ELAB_PKG    = $(DTL_ELAB_OPTS) -partcomp $(DTL_PKG) -dir=DTL_$(DTL_PKG) \
                     -sharedlib=DTL_STATIC -dynamic_tb
@@ -117,7 +128,7 @@ else ifeq ($(SIM),xrun)
   COMPILE_CMD = $(XRUN) -64bit -sv -uvm -uvmhome $(UVM_HOME) \
                 -timescale 1ns/1ps -access +rwc -elaborate -process_save \
                 -xmlibdirname $(XLIB) +define+NV_SR_XCELIUM \
-                -top $(TOP) $(LIB_FILES) $(TB_FILES) $(XRUN_EXTRA)
+                -top $(TOP) $(TOPO_DEFS) $(LIB_FILES) $(TB_FILES) $(XRUN_EXTRA)
   RUN_CMD     = $(XRUN) -64bit -R -process_save -xmlibdirname $(XLIB) $(SIM_ARGS)
   SAVE_CMD    = $(XRUN) -64bit -R -process_save -xmlibdirname $(XLIB) \
                 $(SIM_ARGS) +sim_image_save_enable \

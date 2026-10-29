@@ -1,14 +1,13 @@
 # ============================================================================
-# post_domain -- Approach B: post test built at release_post() during the
-# main test, runtime phases synced with it.
+# post_domain -- Approach B: post test (pcie_post_test) built at
+# release_post() during the main test, runtime phases synced with it.
 #
-#   make compile               [SIM=vcs|xrun]
+#   make compile               [SIM=vcs|xrun] [TOPO=v1|v2]
 #   make run_default           release 30 ns into the main main_phase
 #   make run_release_reset     release in reset: less catch-up, then lockstep
 #   make run_release_late      release 90 ns into main: main main_phase waits
 #                              for the post reset .. main
 #   make run_post_long         post main 300 ns: main main_phase waits
-#   make run_post_b            +POST_TEST=pcie_post_test_b (adds pcie_cov)
 #   make run_tb_release        released from tb_top (module) at 50 ns
 #   make run_norelease         never released: post domain skipped
 #   make run_gate_timeout      never released + POST_GATE_TIMEOUT: fatal
@@ -17,9 +16,16 @@
 #   make run_jump_post_back    post jumps main -> reset; mirrored on main
 #   make run_jump_nomirror     as run_jump_main_back, +PSDOM_NO_JUMP_MIRROR
 #   make save                  save point B (before release_post), $finish
-#   make restore               restore B: +POST_TEST=$(POST_TEST),
-#                              +POST_MAIN=$(POST_MAIN)
-#   make restore_a             restore B with pcie_post_test
+#   make restore               restore B: same post test, +POST_MAIN, plus
+#                              the command-line overrides below, checked;
+#                              pcie_agt main is then 77, the command line
+#                              winning over the env's own POST_MAIN set
+#                              (CL=0: +POST_MAIN only)
+#
+# Topology: TOPO=v2 builds env.pcie_cov in the same post test
+# (+define+TOPO_V2 on post_tb_pkg). With FLOW=dtl the checkpoint is reused:
+#   make compile save restore FLOW=dtl             topology v1
+#   make compile_pkg restore FLOW=dtl TOPO=v2      same checkpoint, v2
 #
 # Command-line reprocessing (factory overrides / config, checked with +EXP_*;
 # see "CL_EXPECT" in the log):
@@ -31,7 +37,7 @@
 #                              main env post_window 1
 #   make restore_cl            restore save_cl with NEW settings: the
 #                              restore merges them after the stale ones:
-#                              pcie_post_test_b, pcie_driver ->
+#                              pcie_driver ->
 #                              pcie_driver_fast (type), env.pcie_sb ->
 #                              pcie_scoreboard_strict (instance), pcie_agt
 #                              main 77 over the pcie env's own set, profile
@@ -45,15 +51,13 @@
 #
 # FLOW=dtl (VCS Dynamic Test Load): the saved image has the main test only;
 # post_tb_pkg is loaded right after the restore and the post test is built
-# from it at release_post(). Same targets, e.g.
-#   make compile save restore FLOW=dtl
-#   make compile_pkg FLOW=dtl  after editing post_tb_pkg.sv; restore again
+# from it at release_post().
 #   static : main_tb_pkg.sv, tb_top.sv (static.f)  dynamic: post_tb_pkg.sv
 #   restore_cl restores the `save` checkpoint; save_cl, restore_cl_keep and
 #   the run_* targets are FLOW=std only (save_cl's stale overrides name
 #   post_tb_pkg classes, which the save run does not have).
 #
-#   Overrides: POST_TEST=pcie_post_test POST_MAIN=50 CKPT_NAME=post_ckpt_b
+#   Overrides: POST_MAIN=50 CL=0 TOPO=v2 CKPT_NAME=post_ckpt_b
 #              ARGS='+...' VERBOSITY=UVM_LOW
 # ============================================================================
 
@@ -62,8 +66,8 @@ SAVE_CKPT   := $(CKPT_NAME)
 CL_CKPT     ?= post_ckpt_cl
 EXTRA_CKPTS  = $(CL_CKPT)
 DTL_PKG      = post_tb_pkg
-POST_TEST   ?= pcie_post_test_b
 POST_MAIN   ?= 50
+CL          ?= 1
 
 include ../common/common.mk
 
@@ -74,8 +78,7 @@ CL_STALE = +uvm_set_type_override=pcie_driver,pcie_driver_slow \
            +uvm_set_config_string=uvm_post_top.env,profile,stale \
            +uvm_set_config_int=uvm_test_top.env,post_window,1
 # Settings given to the restored (or plain) run, and what they must give.
-CL_NEW   = +POST_TEST=pcie_post_test_b \
-           +uvm_set_type_override=pcie_driver,pcie_driver_fast \
+CL_OVR   = +uvm_set_type_override=pcie_driver,pcie_driver_fast \
            +uvm_set_inst_override=pcie_scoreboard,pcie_scoreboard_strict,uvm_post_top.env.pcie_sb \
            +uvm_set_config_int=uvm_post_top.env.pcie_agt,main_delay,77 \
            +uvm_set_config_string=uvm_post_top.env,profile,gen5 \
@@ -87,14 +90,16 @@ CL_EXP   = +EXP_DRV_TYPE=pcie_driver_fast +EXP_SB_TYPE=pcie_scoreboard_strict \
 CL_EXP_KEEP = +EXP_DRV_TYPE=pcie_driver_slow +EXP_SB_TYPE=pcie_scoreboard \
            +EXP_PCIE_MAIN=20 +EXP_PROFILE=stale +EXP_POST_WINDOW=1 \
            +EXP_TXN_TYPE=soc_txn
+# CL=1 (default): restore also passes CL_OVR and checks it.
+RESTORE_CL = $(if $(filter 1,$(CL)),$(CL_OVR) $(CL_EXP))
 
 save_cl restore_cl_keep: CKPT_NAME = $(CL_CKPT)
 restore_cl: CKPT_NAME = $(if $(DTL),$(SAVE_CKPT),$(CL_CKPT))
 
-.PHONY: run_default run_release_reset run_release_late run_post_long run_post_b \
+.PHONY: run_default run_release_reset run_release_late run_post_long \
         run_tb_release run_norelease run_gate_timeout run_jump_main_back \
         run_jump_main_fwd run_jump_post_back run_jump_nomirror \
-        save restore restore_a run_cl save_cl restore_cl restore_cl_keep
+        save restore run_cl save_cl restore_cl restore_cl_keep
 
 run_default:
 	$(call sim_run,run_default,)
@@ -107,9 +112,6 @@ run_release_late:
 
 run_post_long:
 	$(call sim_run,run_post_long,+POST_MAIN=300)
-
-run_post_b:
-	$(call sim_run,run_post_b,+POST_TEST=pcie_post_test_b)
 
 run_tb_release:
 	$(call sim_run,run_tb_release,+NO_RELEASE +RELEASE_FROM_TB=50)
@@ -136,20 +138,17 @@ save:
 	$(call sim_save,save,+SAVE_BEFORE_RELEASE)
 
 restore:
-	$(call sim_restore,restore_$(POST_TEST),+POST_TEST=$(POST_TEST) +POST_MAIN=$(POST_MAIN))
-
-restore_a:
-	$(call sim_restore,restore_a,+POST_TEST=pcie_post_test)
+	$(call sim_restore,restore,+POST_MAIN=$(POST_MAIN) $(RESTORE_CL))
 
 run_cl:
-	$(call sim_run,run_cl,$(CL_NEW) $(CL_EXP))
+	$(call sim_run,run_cl,$(CL_OVR) $(CL_EXP))
 
 save_cl:
 	$(call std_only,the stale overrides name post_tb_pkg classes)
 	$(call sim_save,save_cl,+SAVE_BEFORE_RELEASE $(CL_STALE))
 
 restore_cl:
-	$(call sim_restore,restore_cl,$(CL_NEW) $(CL_EXP))
+	$(call sim_restore,restore_cl,$(CL_OVR) $(CL_EXP))
 
 restore_cl_keep:
 	$(call std_only,needs the save_cl checkpoint)
