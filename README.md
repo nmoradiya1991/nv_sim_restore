@@ -1,4 +1,4 @@
-# nv_socv_sim_restore
+# nv_sim_restore
 
 A UVM library for building the testbench at non-zero time: after a boot, after
 a checkpoint restore, or during the main test. Each late build reprocesses the
