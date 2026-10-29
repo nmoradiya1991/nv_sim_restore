@@ -14,3 +14,7 @@ xrun.key
 waves.shm/
 .process_save/
 .xm_dmtcp_env.txt_*
+simv_dtl
+simv_dtl.daidir/
+DTL_*/
+64/

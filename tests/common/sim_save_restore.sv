@@ -14,6 +14,11 @@
 //   +sim_finish_after_save            $finish right after the save
 // Plusargs (restored run):
 //   +sim_image_restore_enable         fire "sim_image_restored" after restore
+//   +dtl_add_pkg=<dir>:<pkg>          VCS Dynamic Test Load: $dtl_load the
+//                                     package right after the restore, before
+//                                     "sim_image_restored" / "sim_image_saved"
+//                                     (static image compiled with
+//                                     -enable_dynamic_tb +define+NV_DTL)
 //
 // Global uvm_events (uvm_event_pool::get_global), usable from module and
 // class code:
@@ -41,6 +46,22 @@ module sim_save_restore;
   uvm_event        saved_ev;
   uvm_event        restored_ev;
 
+  // The dynamic package's classes register with the factory when it is
+  // loaded, so it must be loaded before anything waiting on the save point
+  // creates a test from it.
+  task automatic dtl_load();
+    string pkg;
+    if (!$value$plusargs("dtl_add_pkg=%s", pkg))
+      return;
+`ifdef NV_DTL
+    $display("<%0t> SIM_IMAGE: $dtl_load (+dtl_add_pkg=%s)", $realtime, pkg);
+    $dtl_load;
+`else
+    $display("<%0t> SIM_IMAGE: +dtl_add_pkg=%s ignored: static image not compiled with +define+NV_DTL",
+             $realtime, pkg);
+`endif
+  endtask
+
   task automatic save_image();
     string save_file;
 
@@ -59,6 +80,7 @@ module sim_save_restore;
     if ($test$plusargs("sim_image_restore_enable") && !restored) begin
       restored = 1'b1;
       $display("<%0t> SIM_IMAGE: simulation restored", $realtime);
+      dtl_load();
       restored_ev.trigger();
     end
     saved_ev.trigger();

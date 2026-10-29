@@ -43,13 +43,25 @@
 #                              save run is kept)
 #   make clean
 #
+# FLOW=dtl (VCS Dynamic Test Load): the saved image has the main test only;
+# post_tb_pkg is loaded right after the restore and the post test is built
+# from it at release_post(). Same targets, e.g.
+#   make compile save restore FLOW=dtl
+#   make compile_pkg FLOW=dtl  after editing post_tb_pkg.sv; restore again
+#   static : main_tb_pkg.sv, tb_top.sv (static.f)  dynamic: post_tb_pkg.sv
+#   restore_cl restores the `save` checkpoint; save_cl, restore_cl_keep and
+#   the run_* targets are FLOW=std only (save_cl's stale overrides name
+#   post_tb_pkg classes, which the save run does not have).
+#
 #   Overrides: POST_TEST=pcie_post_test POST_MAIN=50 CKPT_NAME=post_ckpt_b
 #              ARGS='+...' VERBOSITY=UVM_LOW
 # ============================================================================
 
 CKPT_NAME   ?= post_ckpt_b
+SAVE_CKPT   := $(CKPT_NAME)
 CL_CKPT     ?= post_ckpt_cl
 EXTRA_CKPTS  = $(CL_CKPT)
+DTL_PKG      = post_tb_pkg
 POST_TEST   ?= pcie_post_test_b
 POST_MAIN   ?= 50
 
@@ -76,7 +88,8 @@ CL_EXP_KEEP = +EXP_DRV_TYPE=pcie_driver_slow +EXP_SB_TYPE=pcie_scoreboard \
            +EXP_PCIE_MAIN=20 +EXP_PROFILE=stale +EXP_POST_WINDOW=1 \
            +EXP_TXN_TYPE=soc_txn
 
-save_cl restore_cl restore_cl_keep: CKPT_NAME = $(CL_CKPT)
+save_cl restore_cl_keep: CKPT_NAME = $(CL_CKPT)
+restore_cl: CKPT_NAME = $(if $(DTL),$(SAVE_CKPT),$(CL_CKPT))
 
 .PHONY: run_default run_release_reset run_release_late run_post_long run_post_b \
         run_tb_release run_norelease run_gate_timeout run_jump_main_back \
@@ -132,10 +145,12 @@ run_cl:
 	$(call sim_run,run_cl,$(CL_NEW) $(CL_EXP))
 
 save_cl:
+	$(call std_only,the stale overrides name post_tb_pkg classes)
 	$(call sim_save,save_cl,+SAVE_BEFORE_RELEASE $(CL_STALE))
 
 restore_cl:
 	$(call sim_restore,restore_cl,$(CL_NEW) $(CL_EXP))
 
 restore_cl_keep:
+	$(call std_only,needs the save_cl checkpoint)
 	$(call sim_restore,restore_cl_keep,$(CL_EXP_KEEP))

@@ -25,6 +25,13 @@
 #                              ones are gone (the argv tables are rebuilt)
 #   make clean
 #
+# FLOW=dtl (VCS Dynamic Test Load): the saved image has no test classes;
+# test_pkg is loaded right after the restore. Same targets, e.g.
+#   make compile save restore FLOW=dtl
+#   make compile_pkg FLOW=dtl  after editing test_pkg.sv; restore again
+#   static : dl_if.sv, tb_top.sv (static.f)    dynamic: test_pkg.sv
+#   run_* targets are FLOW=std only.
+#
 #   Overrides: TEST=dl_test_b DL_MODE=7 N_ITEMS=8 CKPT_NAME=dl_ckpt_a
 #              ARGS='+...' VERBOSITY=UVM_LOW
 # ============================================================================
@@ -32,6 +39,7 @@
 CKPT_NAME   ?= dl_ckpt_a
 CL_CKPT     ?= dl_ckpt_cl
 EXTRA_CKPTS  = $(CL_CKPT)
+DTL_PKG      = test_pkg
 TEST        ?= dl_test_b
 DL_MODE     ?= 7
 N_ITEMS     ?= 8

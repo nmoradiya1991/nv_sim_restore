@@ -34,13 +34,25 @@
 #                              ones are gone (the argv tables are rebuilt)
 #   make clean
 #
+# FLOW=dtl (VCS Dynamic Test Load): the saved image has the boot (pre test)
+# only; main_tb_pkg is loaded right after the restore and the main test is
+# built from it at release_main(). Same targets, e.g.
+#   make compile save restore FLOW=dtl
+#   make compile_pkg FLOW=dtl  after editing main_tb_pkg.sv; restore again
+#   static : pre_tb_pkg.sv, tb_top.sv (static.f)   dynamic: main_tb_pkg.sv
+#   restore_cl / restore_cl_drop restore the `save` checkpoint; save_cl and
+#   the run_* targets are FLOW=std only (save_cl's stale overrides name
+#   main_tb_pkg classes, which the save run does not have).
+#
 #   Overrides: MAIN_TEST=soc_test_a MAIN_SEED=7 CKPT_NAME=pre_ckpt_a
 #              ARGS='+...' VERBOSITY=UVM_LOW
 # ============================================================================
 
 CKPT_NAME   ?= pre_ckpt_a
+SAVE_CKPT   := $(CKPT_NAME)
 CL_CKPT     ?= pre_ckpt_cl
 EXTRA_CKPTS  = $(CL_CKPT)
+DTL_PKG      = main_tb_pkg
 MAIN_TEST   ?= soc_test_b
 MAIN_SEED   ?= 42
 
@@ -66,7 +78,8 @@ CL_EXP   = +EXP_CPU_TYPE=cpu_agent_fast +EXP_DDR_TYPE=ddr_agent_lp \
 CL_EXP_DROP = +UVM_TESTNAME=soc_test_b +EXP_CPU_TYPE=cpu_agent \
            +EXP_DDR_TYPE=ddr_agent +EXP_CPU_MAIN=200 +EXP_PROFILE=default
 
-save_cl restore_cl restore_cl_drop: CKPT_NAME = $(CL_CKPT)
+save_cl: CKPT_NAME = $(CL_CKPT)
+restore_cl restore_cl_drop: CKPT_NAME = $(if $(DTL),$(SAVE_CKPT),$(CL_CKPT))
 
 .PHONY: run_default run_cmdline run_pre_long run_jump_back run_jump_fwd \
         run_gate_timeout save restore restore_a \
@@ -106,6 +119,7 @@ run_cl_main:
 	$(call sim_run,run_cl_main,$(CL_NEW) $(CL_EXP))
 
 save_cl:
+	$(call std_only,the stale overrides name main_tb_pkg classes)
 	$(call sim_save,save_cl,$(CL_STALE))
 
 restore_cl:

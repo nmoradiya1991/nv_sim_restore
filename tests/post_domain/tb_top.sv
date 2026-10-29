@@ -23,7 +23,11 @@ module tb_top;
   import uvm_pkg::*;
   import nv_socv_sim_restore_pkg::*;
   import tests_common_pkg::*;
-  import test_pkg::*;
+  import main_tb_pkg::*;
+`ifndef NV_DTL
+  // DTL: post_tb_pkg is the dynamic package, loaded after the restore.
+  import post_tb_pkg::*;
+`endif
 
   sim_save_restore u_sim_save_restore();
 
