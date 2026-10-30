@@ -18,3 +18,6 @@ simv_dtl
 simv_dtl.daidir/
 DTL_*/
 64/
+ckpt_vcs_dtl/
+xcelium_dtr.d/
+ckpt_xrun_dtr/

@@ -17,8 +17,8 @@ nv_sim_restore/
     └── post_domain/          Approach B: post test built during the main test
 ```
 
-Each test folder has a `Makefile`, `files.f` (all files), `static.f` (DTL
-static image) and `tb_top.sv`. `make help` lists the folder's targets.
+Each test folder has a `Makefile`, `files.f` (all files), `static.f` (DTL /
+DTR static image) and `tb_top.sv`. `make help` lists the folder's targets.
 
 ## Documentation
 
@@ -28,8 +28,9 @@ static image) and `tb_top.sv`. `make help` lists the folder's targets.
 | [doc/delayed_launch.md](doc/delayed_launch.md) | Approach A: delayed `run_test()` |
 | [doc/pre_domain.md](doc/pre_domain.md) | Approach B: pre domain |
 | [doc/post_domain.md](doc/post_domain.md) | Approach B: post domain |
-| [doc/cmdline_reprocessing.md](doc/cmdline_reprocessing.md) | command-line refresh / merge rules, worked override cases |
-| [doc/save_restore.md](doc/save_restore.md) | save / restore, Xcelium `-process_save`, VCS Dynamic Test Load |
+| [doc/cmdline_strategy.md](doc/cmdline_strategy.md) | why and how the UVM command line is reprocessed: repopulate vs. merge, precedence, diagrams |
+| [doc/cmdline_reprocessing.md](doc/cmdline_reprocessing.md) | command-line refresh API, merge rules, worked override cases |
+| [doc/save_restore.md](doc/save_restore.md) | save / restore, Xcelium `-process_save`, VCS Dynamic Test Load, Xcelium Dynamic Test Reload |
 | [doc/tests.md](doc/tests.md) | test folders and targets |
 
 ## Setup
@@ -45,17 +46,18 @@ Optional make variables:
 | Variable | Default | Meaning |
 |:--|:--|:--|
 | `SIM` | `vcs` | `vcs` or `xrun` |
-| `FLOW` | `std` | `std`, or `dtl` (VCS Dynamic Test Load, VCS only) |
+| `FLOW` | `std` | `std`; `dtl` (VCS Dynamic Test Load, `SIM=vcs` only); `dtr` (Xcelium Dynamic Test Reload, `SIM=xrun` only) |
 | `UVM_VER` | `uvm-1.2` | VCS UVM library |
 | `VERBOSITY` | `UVM_MEDIUM` | `+UVM_VERBOSITY` |
 | `ARGS` | — | extra plusargs on every run |
 | `SAVE_FINISH` | `1` | `$finish` right after the save |
 | `VCS_EXTRA` / `XRUN_EXTRA` | — | extra compile options |
 | `DTL_ELAB_OPTS` | `-full64 -sverilog +vcs+lic+wait` | `FLOW=dtl`: options of both elaborations (must match) |
+| `DTR_BASE` | `dbs_base` | `FLOW=dtr`: name of the dynamic base snapshot |
 | `TOPO` | `v1` | `v2`: `pre_domain` / `post_domain` compile the package built after the save point with `+define+TOPO_V2`, a different topology of the same test |
 | `CL` | `1` | `pre_domain` / `post_domain`: `make restore` also passes and checks command-line overrides; `0`: off |
 
-Logs go to `tests/<folder>/logs/<target>_<sim>[_dtl].log`.
+Logs go to `tests/<folder>/logs/<target>_<sim>[_dtl|_dtr].log`.
 
 ## Compile and run
 
@@ -115,6 +117,25 @@ make restore FLOW=dtl               # then restore the SAME checkpoint; no new s
 `run_*` targets are not available with `FLOW=dtl`. See
 [doc/save_restore.md](doc/save_restore.md#vcs-dynamic-test-load-dtl) for details.
 
+### Xcelium Dynamic Test Reload
+
+Same idea on Xcelium. `compile` builds the dynamic base snapshot (DBS)
+from `static.f` with `-mkdbssnap`. `save` runs it to the save point. Each
+`restore` compiles the dynamic package and links it with the saved snapshot
+(`-dbsname` / `-dbssnap`, the dynamic test snapshot), then restarts from it.
+There is no separate package build: every restore picks up the current
+package source.
+
+```bash
+export XCELIUM_HOME=/path/to/XCELIUM<version>
+export UVM_HOME=CDNS-1.2
+make compile save restore SIM=xrun FLOW=dtr      # base snapshot, save, restore
+make restore SIM=xrun FLOW=dtr TOPO=v2           # same checkpoint, new topology
+```
+
+`run_*` targets are not available with `FLOW=dtr`. See
+[doc/save_restore.md](doc/save_restore.md#xcelium-dynamic-test-reload-dtr) for details.
+
 ## What to expect after a restore
 
 In every folder, `make save` stops at the save point, before the part of the
@@ -143,8 +164,16 @@ right after the restore:
 Every restore ends with `UVM_ERROR : 0`, `UVM_FATAL : 0` and
 `[CL_EXPECT] <n> expectation(s) checked, 0 failed`.
 
+With `SIM=xrun FLOW=dtr` the restore log carries one marker line in the same
+place instead (`+dtr_pkg`; xrun links the package before the restart):
+
+```
+<50001000> SIM_IMAGE: simulation restored
+<50001000> SIM_IMAGE: DTR package main_tb_pkg linked with the restored snapshot
+```
+
 > [!IMPORTANT]
-> **With DTL, one checkpoint serves any number of testbench versions.**
+> **With DTL (VCS) or DTR (Xcelium), one checkpoint serves any number of testbench versions.**
 >
 > The checkpoint holds only the static image. The dynamic package
 > (`test_pkg`, `main_tb_pkg` or `post_tb_pkg`) is loaded fresh on every
@@ -157,6 +186,9 @@ Every restore ends with `UVM_ERROR : 0`, `UVM_FATAL : 0` and
 > make compile save restore FLOW=dtl        # once: save; restore with topology v1
 > make compile_pkg FLOW=dtl TOPO=v2         # seconds: rebuilds just the dynamic package
 > make restore FLOW=dtl                     # same checkpoint, same test, topology v2
+>
+> make compile save restore SIM=xrun FLOW=dtr   # Xcelium: same, restore compiles the package
+> make restore SIM=xrun FLOW=dtr TOPO=v2        # same checkpoint, same test, topology v2
 > ```
 >
 > `TOPO=v2` is a ready-made example of such a change: the same test builds
@@ -164,10 +196,10 @@ Every restore ends with `UVM_ERROR : 0`, `UVM_FATAL : 0` and
 > `post_domain`). Any edit of the package works the same way.
 >
 > With `FLOW=std`, the testbench code is frozen inside the checkpoint, so any
-> change to it needs a recompile and a new save. The only rule with DTL is
-> that the static part (`static.f`: `tb_top`, the DUT, and the packages
+> change to it needs a recompile and a new save. The only rule with DTL / DTR
+> is that the static part (`static.f`: `tb_top`, the DUT, and the packages
 > already alive at the save point) must not change. If it does, rerun
-> `make compile save FLOW=dtl`.
+> `make compile save FLOW=dtl` (or `SIM=xrun FLOW=dtr`).
 
 ### delayed_launch: the whole UVM test is built after the restore
 
@@ -183,7 +215,7 @@ topology exists. The save command line carries **stale** settings
 ```
 
 Restore (`restore_cl`): the command line is **repopulated** (there is no
-`uvm_test_top` yet), so the stale settings are gone. `run_test()` launches
+`uvm_test_top` yet), so the stale settings are flushed. `run_test()` launches
 only now, and UVM applies the restore command line as if it were time 0:
 
 ```

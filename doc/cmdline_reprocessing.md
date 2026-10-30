@@ -6,12 +6,17 @@ line. `nv_socv_cmdline_processor` rewrites the `uvm_cmdline_processor` tables
 from the current invocation (`uvm_dpi_get_next_arg()`) right before each late
 build.
 
+The strategy (why the tables are reprocessed, repopulate vs. merge, and the
+precedence of repeated arguments) is explained with diagrams in
+[cmdline_strategy.md](cmdline_strategy.md). This page is the API reference
+and the worked cases.
+
 ```mermaid
 flowchart TD
     A["late build about to start<br/>(pd_build · main build · ps_build)"] --> B{"$time == 0<br/>or already refreshed?"}
     B -- yes --> N["no-op"]
     B -- no --> C{"uvm_test_top exists?"}
-    C -- no --> R["REPOPULATE<br/>clear + refill m_argv / m_plus_argv / m_uvm_argv<br/>then reapply_cmdline_settings()"]
+    C -- no --> R["REPOPULATE<br/>flush + refill m_argv / m_plus_argv / m_uvm_argv<br/>from the current command line<br/>then reapply_cmdline_settings()"]
     C -- yes --> M["MERGE (append_cmdline)<br/>same key → replaced · +uvm_set_* → appended<br/>then reapply_cmdline_settings()"]
     R --> T["tree built · start of its connect:<br/>reapply_report_settings_for_late_build()"]
     M --> T
@@ -28,7 +33,9 @@ flowchart TD
 | `enter_build_config_precedence()` / `exit_build_config_precedence(prev)` | `pd_build` / `ps_build` around each `build_phase()` | standard build-phase config precedence (higher level wins) |
 | `is_cmdline_refreshed()` | anyone | refreshed in this invocation? |
 
-**Merge rules** (`+NAME=value`, key = text before the first `=`)
+**Merge rules** (`+NAME=value`, key = text before the first `=`), applied to
+the current command line after repeated settings are collapsed
+(`+NV_SOCV_CMDLINE_PRECEDENCE`, see [cmdline_strategy.md](cmdline_strategy.md#repeated-arguments-precedence))
 
 | Argument | Action | Report |
 |:--|:--|:--|
@@ -64,12 +71,12 @@ settings, and the **restore run** gets *new* ones. The `restore_cl_drop` and
 | `delayed_launch` | `run_cl` | `+UVM_TESTNAME=dl_test_b`, type `dl_driver→dl_driver_fast`, inst `uvm_test_top.env.chk→dl_checker_strict`, `env.drv n_items=12` (env default 4), `env profile=stress` | all 4 applied |
 | | `save_cl` | saved at the gate; stale: type `dl_driver→dl_driver_slow`, `n_items=2`, `profile=stale` | — |
 | | `restore_cl` | the `run_cl` settings | all 4 applied, stale ones gone (**repopulate**: no `uvm_test_top` yet) |
-| | `restore_cl_drop` | only `+UVM_TESTNAME=dl_test_b` | `dl_driver`, `dl_checker`, 4, `default` |
+| | `restore_cl_drop` | only `+UVM_TESTNAME=dl_test_b` | VCS: `dl_driver`, `dl_checker`, 4, `default`; Xcelium: `dl_driver_slow`, `dl_checker`, 2, `stale` (see [cmdline_strategy.md](cmdline_strategy.md#xcelium-the-restored-command-line)) |
 | `pre_domain` | `run_cl_pre` | type `fw_load_agent→fw_load_agent_fast`, `uvm_pre_top.env.fw_load_agt main_delay=90` (no save) | fast, 90 |
 | | `run_cl_main` | type `cpu_agent→cpu_agent_fast`, inst `uvm_test_top.env.ddr_agt→ddr_agent_lp`, `cpu_agt main_delay=250` (env sets 100), `profile=perf` | all 4 applied |
 | | `save_cl` | saved before the main build; stale: `cpu_agent→cpu_agent_slow`, `main_delay=5`, `profile=stale` | — |
 | | `restore_cl` | the `run_cl_main` settings | all 4 applied, stale ones gone (repopulate) |
-| | `restore_cl_drop` | none | `cpu_agent`, `ddr_agent`, 100, `default` |
+| | `restore_cl_drop` | none | VCS: `cpu_agent`, `ddr_agent`, 100, `default`; Xcelium: `cpu_agent_slow`, `ddr_agent`, 5, `stale` |
 | `post_domain` | `run_cl` | type `pcie_driver→pcie_driver_fast`, inst `uvm_post_top.env.pcie_sb→pcie_scoreboard_strict`, `pcie_agt main_delay=77` (pcie env sets 20), `profile=gen5`; main tree: `uvm_test_top.env post_window=40` and type `soc_txn→soc_txn_ext`, both used by the main env **after the release** | all 6 applied |
 | | `save_cl` | save point B (before the release); stale: `pcie_driver→pcie_driver_slow`, post `profile=stale`, `post_window=1` | — |
 | | `restore_cl` | the `run_cl` settings | all 6 applied; each new setting wins over the stale one (**merge**: `uvm_test_top` exists, entries replayed in order) |

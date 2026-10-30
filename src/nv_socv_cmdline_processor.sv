@@ -69,19 +69,144 @@ class nv_socv_cmdline_processor extends uvm_cmdline_processor;
     endfunction
 
     /**
+     * @brief Identity of a plusarg, for keeping only its first occurrence.
+     *
+     * @details
+     * Two plusargs with the same identity set the same thing. For `+uvm_set_*`
+     * settings the identity is the setting name plus the fields naming its
+     * target (not the value):
+     *   - `type_override`: requested type
+     *   - `inst_override`: requested type, instance path
+     *   - `config_int` / `config_string`: instance path, field
+     *   - `verbosity`: every field except the verbosity
+     *   - `action` / `severity`: component, id, severity
+     *   - `default_sequence`: instance path, phase
+     * Other `+uvm_set_*` switches are identified by their full text. Every other
+     * plusarg is identified by `get_arg_key()` (`+NAME` of `+NAME=value`).
+     *
+     * @param arg Plusarg to inspect.
+     * @return Identity string.
+     */
+    static local function string get_setting_key(string arg);
+        string name;
+        string prefix;
+        string fields[$];
+        int field_start;
+
+        name = get_arg_key(arg);
+        if (name.len() < 9)
+            return name;
+        prefix = name.substr(0, 8);
+        if (prefix.tolower() != "+uvm_set_")
+            return name;
+        if (name.len() == arg.len())
+            return arg;
+
+        field_start = name.len() + 1;
+        for (int idx = field_start; idx <= arg.len(); idx++) begin
+            if ((idx == arg.len()) || (arg[idx] == ",")) begin
+                fields.push_back((idx > field_start) ? arg.substr(field_start, idx - 1) : "");
+                field_start = idx + 1;
+            end
+        end
+
+        name = name.tolower();
+        case (name)
+            "+uvm_set_type_override":
+                return (fields.size() >= 1) ? {name, ":", fields[0]} : arg;
+            "+uvm_set_inst_override":
+                return (fields.size() >= 3) ? {name, ":", fields[0], ",", fields[2]} : arg;
+            "+uvm_set_config_int",
+            "+uvm_set_config_string",
+            "+uvm_set_default_sequence":
+                return (fields.size() >= 2) ? {name, ":", fields[0], ",", fields[1]} : arg;
+            "+uvm_set_action",
+            "+uvm_set_severity":
+                return (fields.size() >= 3) ? {name, ":", fields[0], ",", fields[1], ",", fields[2]} : arg;
+            "+uvm_set_verbosity": begin
+                if (fields.size() < 4)
+                    return arg;
+                fields.delete(2);
+                get_setting_key = name;
+                foreach (fields[idx])
+                    get_setting_key = {get_setting_key, (idx == 0) ? ":" : ",", fields[idx]};
+                return get_setting_key;
+            end
+            default:
+                return arg;
+        endcase
+    endfunction
+
+    /**
+     * @brief Read the current command line through `uvm_dpi_get_next_arg()`.
+     *
+     * @details
+     * A setting given more than once (same `get_setting_key()` identity) is
+     * kept once. `+NV_SOCV_CMDLINE_PRECEDENCE=first` (default) keeps the first
+     * occurrence, the rule `$value$plusargs` follows; `=last` keeps the last
+     * one, at its position. After an Xcelium restart the reported argv holds
+     * the new command line followed by the saving run's plusargs, so `first`
+     * makes the new values win and `last` the saving run's. Tokens that are
+     * not plusargs are kept as they are.
+     *
+     * @param args Current command line, one occurrence per setting.
+     */
+    static local function void read_dpi_cmdline(output string args[$]);
+        string s;
+        string precedence;
+        string all_args[$];
+        int keep_idx[string];
+        int doInit;
+        bit last;
+
+        doInit = 1;
+        do begin
+            s = uvm_dpi_get_next_arg(doInit);
+            doInit = 0;
+            if (s != "")
+                all_args.push_back(s);
+        end while (s != "");
+
+        last = 0;
+        if ($value$plusargs("NV_SOCV_CMDLINE_PRECEDENCE=%s", precedence)) begin
+            precedence = precedence.tolower();
+            if (precedence == "last")
+                last = 1;
+            else if (precedence != "first")
+                `nv_uvm_warning("NV_SOCV_CMDLINE_PROCESSOR/PRECEDENCE",
+                                $sformatf("+NV_SOCV_CMDLINE_PRECEDENCE=%s: expected first or last; using first", precedence))
+        end
+
+        foreach (all_args[idx]) begin
+            s = all_args[idx];
+            if ((s[0] == "+") && (last || !keep_idx.exists(get_setting_key(s))))
+                keep_idx[get_setting_key(s)] = idx;
+        end
+
+        args.delete();
+        foreach (all_args[idx]) begin
+            s = all_args[idx];
+            if ((s[0] != "+") || (keep_idx[get_setting_key(s)] == idx))
+                args.push_back(s);
+        end
+    endfunction
+
+    /**
      * @brief Rebuild UVM argv/plusarg/uvm_argv tables from DPI command line.
      *
      * @details
      * Clears `m_argv`, `m_plus_argv`, and `m_uvm_argv` on the UVM singleton
-     * returned by `get_inst()`, then walks `uvm_dpi_get_next_arg()` to refill
-     * them. Plusargs (tokens beginning with `+`) are mirrored into `m_plus_argv`;
+     * returned by `get_inst()`, then refills them from `read_dpi_cmdline()`.
+     * Entries of the saving run are not kept: before `uvm_test_top` exists,
+     * nothing has been built from them.
+     * Plusargs (tokens beginning with `+`) are mirrored into `m_plus_argv`;
      * tokens whose first four characters after `+`/`-` spell `UVM` (case
      * insensitive) are also added to `m_uvm_argv`.
      */
     static local function void repopulate_cmdline();
         string s;
-        int doInit;
         string sub;
+        string args[$];
         uvm_cmdline_processor clp;
 
         if (m_cmdline_repopulated) begin
@@ -91,26 +216,23 @@ class nv_socv_cmdline_processor extends uvm_cmdline_processor;
 
         m_cmdline_repopulated = 1;
         clp = get_inst();   // the real UVM singleton
+        read_dpi_cmdline(args);
         clp.m_argv.delete();
         clp.m_plus_argv.delete();
         clp.m_uvm_argv.delete();
 
-        doInit = 1;
-        do begin
-            s = uvm_dpi_get_next_arg(doInit);
-            doInit = 0;
-            if (s != "") begin
-                clp.m_argv.push_back(s);
-                if (s[0] == "+")
-                    clp.m_plus_argv.push_back(s);
-                if (s.len() >= 4 && (s[0]=="-" || s[0]=="+")) begin
-                    sub = s.substr(1,3);
-                    sub = sub.toupper();
-                    if (sub == "UVM")
-                        clp.m_uvm_argv.push_back(s);
-                end
+        foreach (args[n]) begin
+            s = args[n];
+            clp.m_argv.push_back(s);
+            if (s[0] == "+")
+                clp.m_plus_argv.push_back(s);
+            if (s.len() >= 4 && (s[0]=="-" || s[0]=="+")) begin
+                sub = s.substr(1,3);
+                sub = sub.toupper();
+                if (sub == "UVM")
+                    clp.m_uvm_argv.push_back(s);
             end
-        end while (s != "");
+        end
         `nv_uvm_info("NV_SOCV_CMDLINE_PROCESSOR/REPOPULATE", "Command line repopulated", UVM_NONE);
     endfunction
 
@@ -177,7 +299,8 @@ class nv_socv_cmdline_processor extends uvm_cmdline_processor;
      *
      * @details
      * Unlike `repopulate_cmdline()`, this does **not** clear the existing tables.
-     * A new switch replaces every existing entry with the same key, where the key
+     * The current command line comes from `read_dpi_cmdline()`, one occurrence
+     * per setting. A new switch replaces every existing entry with the same key, where the key
      * is the portion before the first `=` (for example, `+NAME` is the key of
      * `+NAME=value`). Repeatable `+uvm_set_*` switches, new keys, and positional
      * arguments are appended. Singleton replacements are applied consistently to
@@ -190,7 +313,7 @@ class nv_socv_cmdline_processor extends uvm_cmdline_processor;
         string arg_key;
         string existing_key;
         string old_arg;
-        int doInit;
+        string args[$];
         bit arg_found;
         bit override_reported;
         uvm_cmdline_processor clp;
@@ -201,67 +324,64 @@ class nv_socv_cmdline_processor extends uvm_cmdline_processor;
 
         m_cmdline_appended = 1;
         clp = get_inst();   // the real UVM singleton — keep existing argv entries
+        read_dpi_cmdline(args);
 
-        doInit = 1;
-        do begin
-            s = uvm_dpi_get_next_arg(doInit);
-            doInit = 0;
-            if (s != "") begin
-                arg_key = get_arg_key(s);
-                // Preserve every independently processed UVM setting.
-                if (is_repeatable_arg(arg_key))
-                    arg_key = "";
+        foreach (args[n]) begin
+            s = args[n];
+            arg_key = get_arg_key(s);
+            // Preserve every independently processed UVM setting.
+            if (is_repeatable_arg(arg_key))
+                arg_key = "";
+            arg_found = 0;
+            override_reported = 0;
+            foreach (clp.m_argv[idx]) begin
+                existing_key = get_arg_key(clp.m_argv[idx]);
+                if ((arg_key != "") && (existing_key == arg_key)) begin
+                    old_arg = clp.m_argv[idx];
+                    clp.m_argv[idx] = s;
+                    arg_found = 1;
+                    if (!override_reported && (old_arg != s)) begin
+                        `nv_uvm_info("NV_SOCV_CMDLINE_PROCESSOR/OVERRIDE",
+                                     $sformatf("Command-line argument overridden: '%s' -> '%s'",
+                                               old_arg, s),
+                                     UVM_NONE);
+                        override_reported = 1;
+                    end
+                end
+            end
+            if (!arg_found)
+                clp.m_argv.push_back(s);
+
+            if (s[0] == "+") begin
                 arg_found = 0;
-                override_reported = 0;
-                foreach (clp.m_argv[idx]) begin
-                    existing_key = get_arg_key(clp.m_argv[idx]);
+                foreach (clp.m_plus_argv[idx]) begin
+                    existing_key = get_arg_key(clp.m_plus_argv[idx]);
                     if ((arg_key != "") && (existing_key == arg_key)) begin
-                        old_arg = clp.m_argv[idx];
-                        clp.m_argv[idx] = s;
+                        clp.m_plus_argv[idx] = s;
                         arg_found = 1;
-                        if (!override_reported && (old_arg != s)) begin
-                            `nv_uvm_info("NV_SOCV_CMDLINE_PROCESSOR/OVERRIDE",
-                                         $sformatf("Command-line argument overridden: '%s' -> '%s'",
-                                                   old_arg, s),
-                                         UVM_NONE);
-                            override_reported = 1;
-                        end
                     end
                 end
                 if (!arg_found)
-                    clp.m_argv.push_back(s);
+                    clp.m_plus_argv.push_back(s);
+            end
 
-                if (s[0] == "+") begin
+            if (s.len() >= 4 && (s[0]=="-" || s[0]=="+")) begin
+                sub = s.substr(1,3);
+                sub = sub.toupper();
+                if (sub == "UVM") begin
                     arg_found = 0;
-                    foreach (clp.m_plus_argv[idx]) begin
-                        existing_key = get_arg_key(clp.m_plus_argv[idx]);
+                    foreach (clp.m_uvm_argv[idx]) begin
+                        existing_key = get_arg_key(clp.m_uvm_argv[idx]);
                         if ((arg_key != "") && (existing_key == arg_key)) begin
-                            clp.m_plus_argv[idx] = s;
+                            clp.m_uvm_argv[idx] = s;
                             arg_found = 1;
                         end
                     end
                     if (!arg_found)
-                        clp.m_plus_argv.push_back(s);
-                end
-
-                if (s.len() >= 4 && (s[0]=="-" || s[0]=="+")) begin
-                    sub = s.substr(1,3);
-                    sub = sub.toupper();
-                    if (sub == "UVM") begin
-                        arg_found = 0;
-                        foreach (clp.m_uvm_argv[idx]) begin
-                            existing_key = get_arg_key(clp.m_uvm_argv[idx]);
-                            if ((arg_key != "") && (existing_key == arg_key)) begin
-                                clp.m_uvm_argv[idx] = s;
-                                arg_found = 1;
-                            end
-                        end
-                        if (!arg_found)
-                            clp.m_uvm_argv.push_back(s);
-                    end
+                        clp.m_uvm_argv.push_back(s);
                 end
             end
-        end while (s != "");
+        end
         `nv_uvm_info("NV_SOCV_CMDLINE_PROCESSOR/APPEND", "Command-line args merged", UVM_NONE);
     endfunction
 

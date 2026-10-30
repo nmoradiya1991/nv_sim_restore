@@ -23,7 +23,7 @@
 #                              (CL=0: +POST_MAIN only)
 #
 # Topology: TOPO=v2 builds env.pcie_cov in the same post test
-# (+define+TOPO_V2 on post_tb_pkg). With FLOW=dtl the checkpoint is reused:
+# (+define+TOPO_V2 on post_tb_pkg). With FLOW=dtl (or dtr, SIM=xrun) the checkpoint is reused:
 #   make compile save restore FLOW=dtl             topology v1
 #   make compile_pkg restore FLOW=dtl TOPO=v2      same checkpoint, v2
 #
@@ -49,7 +49,8 @@
 #                              save run is kept)
 #   make clean
 #
-# FLOW=dtl (VCS Dynamic Test Load): the saved image has the main test only;
+# FLOW=dtl (VCS Dynamic Test Load) or FLOW=dtr SIM=xrun (Xcelium Dynamic Test
+# Reload): the saved image has the main test only;
 # post_tb_pkg is loaded right after the restore and the post test is built
 # from it at release_post().
 #   static : main_tb_pkg.sv, tb_top.sv (static.f)  dynamic: post_tb_pkg.sv
@@ -65,7 +66,7 @@ CKPT_NAME   ?= post_ckpt_b
 SAVE_CKPT   := $(CKPT_NAME)
 CL_CKPT     ?= post_ckpt_cl
 EXTRA_CKPTS  = $(CL_CKPT)
-DTL_PKG      = post_tb_pkg
+DYN_PKG      = post_tb_pkg
 POST_MAIN   ?= 50
 CL          ?= 1
 
@@ -94,7 +95,7 @@ CL_EXP_KEEP = +EXP_DRV_TYPE=pcie_driver_slow +EXP_SB_TYPE=pcie_scoreboard \
 RESTORE_CL = $(if $(filter 1,$(CL)),$(CL_OVR) $(CL_EXP))
 
 save_cl restore_cl_keep: CKPT_NAME = $(CL_CKPT)
-restore_cl: CKPT_NAME = $(if $(DTL),$(SAVE_CKPT),$(CL_CKPT))
+restore_cl: CKPT_NAME = $(if $(DYN),$(SAVE_CKPT),$(CL_CKPT))
 
 .PHONY: run_default run_release_reset run_release_late run_post_long \
         run_tb_release run_norelease run_gate_timeout run_jump_main_back \

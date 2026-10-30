@@ -24,8 +24,8 @@ module tb_top;
   import nv_socv_sim_restore_pkg::*;
   import tests_common_pkg::*;
   import main_tb_pkg::*;
-`ifndef NV_DTL
-  // DTL: post_tb_pkg is the dynamic package, loaded after the restore.
+`ifndef NV_DYN_TB
+  // DTL / DTR: post_tb_pkg is the dynamic package, loaded after the restore.
   import post_tb_pkg::*;
 `endif
 

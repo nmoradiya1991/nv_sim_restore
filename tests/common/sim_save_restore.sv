@@ -5,6 +5,8 @@
 //   VCS     : $save(<dir>/<file>); restore with simv -r <dir>/<file> ...
 //   Xcelium : $save(<file>), elaborated and run with -process_save;
 //             restore with xrun -r <file> ...   (+define+NV_SR_XCELIUM)
+//             DTR: base snapshot built with -mkdbssnap; restore with
+//             xrun <pkg>.sv -dbsname <base> -dbssnap <file> ...
 //
 // Plusargs (save run):
 //   +sim_image_save_enable            enable saving
@@ -19,6 +21,10 @@
 //                                     "sim_image_restored" / "sim_image_saved"
 //                                     (static image compiled with
 //                                     -enable_dynamic_tb +define+NV_DTL)
+//   +dtr_pkg=<pkg>                    Xcelium Dynamic Test Reload: only logged.
+//                                     xrun links <pkg> with the saved snapshot
+//                                     (-dbsname / -dbssnap) before the restart,
+//                                     so its classes are already registered
 //
 // Global uvm_events (uvm_event_pool::get_global), usable from module and
 // class code:
@@ -51,6 +57,9 @@ module sim_save_restore;
   // creates a test from it.
   task automatic dtl_load();
     string pkg;
+    if ($value$plusargs("dtr_pkg=%s", pkg))
+      $display("<%0t> SIM_IMAGE: DTR package %s linked with the restored snapshot",
+               $realtime, pkg);
     if (!$value$plusargs("dtl_add_pkg=%s", pkg))
       return;
 `ifdef NV_DTL

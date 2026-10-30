@@ -21,14 +21,17 @@
 #                              dl_driver_fast (type), env.chk ->
 #                              dl_checker_strict (instance), n_items 12 over
 #                              the env's own set of 4, profile "stress"
-#   make restore_cl_drop       restore save_cl with no settings: the stale
-#                              ones are gone (the argv tables are rebuilt)
+#   make restore_cl_drop       restore save_cl with no settings: repopulate
+#                              flushes the stale ones (VCS); Xcelium still
+#                              reports them after the restart, so they stay
 #   make clean
 #
-# FLOW=dtl (VCS Dynamic Test Load): the saved image has no test classes;
+# FLOW=dtl (VCS Dynamic Test Load) or FLOW=dtr SIM=xrun (Xcelium Dynamic Test
+# Reload): the saved image has no test classes;
 # test_pkg is loaded right after the restore. Same targets, e.g.
 #   make compile save restore FLOW=dtl
 #   make compile_pkg FLOW=dtl  after editing test_pkg.sv; restore again
+#   make compile save restore SIM=xrun FLOW=dtr  (restore compiles test_pkg)
 #   static : dl_if.sv, tb_top.sv (static.f)    dynamic: test_pkg.sv
 #   run_* targets are FLOW=std only.
 #
@@ -39,7 +42,7 @@
 CKPT_NAME   ?= dl_ckpt_a
 CL_CKPT     ?= dl_ckpt_cl
 EXTRA_CKPTS  = $(CL_CKPT)
-DTL_PKG      = test_pkg
+DYN_PKG      = test_pkg
 TEST        ?= dl_test_b
 DL_MODE     ?= 7
 N_ITEMS     ?= 8
@@ -63,8 +66,8 @@ CL_NEW   = +UVM_TESTNAME=dl_test_b \
            +uvm_set_config_string=uvm_test_top.env,profile,stress
 CL_EXP   = +EXP_DRV_TYPE=dl_driver_fast +EXP_CHK_TYPE=dl_checker_strict \
            +EXP_N_ITEMS=12 +EXP_PROFILE=stress
-CL_EXP_DROP = +UVM_TESTNAME=dl_test_b +EXP_DRV_TYPE=dl_driver \
-           +EXP_CHK_TYPE=dl_checker +EXP_N_ITEMS=4 +EXP_PROFILE=default
+CL_EXP_DROP = +UVM_TESTNAME=dl_test_b +EXP_CHK_TYPE=dl_checker \
+           $(if $(filter xrun,$(SIM)),+EXP_DRV_TYPE=dl_driver_slow +EXP_N_ITEMS=2 +EXP_PROFILE=stale,+EXP_DRV_TYPE=dl_driver +EXP_N_ITEMS=4 +EXP_PROFILE=default)
 
 save_cl restore_cl restore_cl_drop: CKPT_NAME = $(CL_CKPT)
 

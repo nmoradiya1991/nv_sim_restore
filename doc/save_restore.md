@@ -71,7 +71,7 @@ the same in both DTL steps (`DTL_ELAB_OPTS`), otherwise VCS reports
 | Folder | Save point | Dynamic package | Not available with `FLOW=dtl` |
 |:--|:--|:--|:--|
 | `delayed_launch` | ◆ A, boot done | `test_pkg` | `run_*` |
-| `pre_domain` | ◆ A, gate closed | `main_tb_pkg` | `run_*`, `save_cl` (`restore_cl` / `restore_cl_drop` restore the `save` checkpoint) |
+| `pre_domain` | ◆ A, gate closed | `main_tb_pkg` | `run_*`, `save_cl`, `restore_cl_drop` (`restore_cl` restores the `save` checkpoint) |
 | `post_domain` | ◆ B, before `release_post()` | `post_tb_pkg` | `run_*`, `save_cl`, `restore_cl_keep` (`restore_cl` restores the `save` checkpoint) |
 
 > `run_*` targets have no restore, so nothing loads the dynamic package.
@@ -80,3 +80,39 @@ the same in both DTL steps (`DTL_ELAB_OPTS`), otherwise VCS reports
 > In `pre_domain` and `post_domain`, that rules out `save_cl` with its stale
 > overrides. In `delayed_launch` it doesn't apply, because the stale
 > settings are only used after the restore.
+
+## Xcelium Dynamic Test Reload (DTR)
+
+`SIM=xrun FLOW=dtr`. The same static / dynamic split as DTL (`static.f` and
+the folder's dynamic package), built with the Xcelium dynamic test flow:
+
+| Step | Target | Command |
+|:--|:--|:--|
+| Dynamic base snapshot (DBS): time-0 model with the DUT, `tb_top` and the static packages | `compile` | `xrun -64bit -sv -uvm -uvmhome $UVM_HOME -elaborate -process_save -mkdbssnap -name dbs_base +define+NV_DYN_TB <library> -f static.f -xmlibdirname xcelium_dtr.d` |
+| Run the DBS to the save point; `$save("<ckpt>")` | `save` | `xrun -64bit -r dbs_base -name dbs_base -process_save -cds_implicit_tmpdir ckpt_xrun_dtr +sim_image_save_enable +sim_image_save_file=<ckpt> ...` |
+| Dynamic test snapshot (DTS): compile the package, link it with the saved snapshot, restart from it | `restore` | `xrun -64bit -sv -uvm -uvmhome $UVM_HOME -uvmnoautocompile -process_save <pkg>.sv -dbsname dbs_base -dbssnap <ckpt> -cds_alternate_tmpdir ckpt_xrun_dtr +sim_image_restore_enable +dtr_pkg=<pkg> <new args>` |
+
+```bash
+cd tests/post_domain                           # same in delayed_launch and pre_domain
+export XCELIUM_HOME=/path/to/XCELIUM<version>
+export UVM_HOME=CDNS-1.2
+make compile SIM=xrun FLOW=dtr                 # DBS from static.f; post_tb_pkg is not in it
+make save    SIM=xrun FLOW=dtr                 # ◆ B, $save("post_ckpt_b"), then $finish
+make restore SIM=xrun FLOW=dtr                 # DTS: compiles post_tb_pkg, restarts from post_ckpt_b
+make restore SIM=xrun FLOW=dtr TOPO=v2         # edited package (here: new topology), same checkpoint
+```
+
+Differences from DTL:
+
+- The package is compiled and linked as part of every restore, so there is no
+  `compile_pkg` step (`compile_pkg` only prints a note with `FLOW=dtr`).
+- No load call after the restore: the package's classes register with the
+  factory when xrun loads the test snapshot, before the restart.
+  `sim_save_restore.sv` only logs `+dtr_pkg` at the restore point.
+- The DBS, the saved snapshots and the DTS live in `xcelium_dtr.d`
+  (`-xmlibdirname`); the process images in `ckpt_xrun_dtr`
+  (`-cds_implicit_tmpdir` on the save, `-cds_alternate_tmpdir` on the
+  restore). The `FLOW=std` Xcelium library `xcelium.d` is not touched.
+- For restores in parallel, give each one its own library (`XLIB=<dir>`,
+  a copy of `xcelium_dtr.d` after the save), since each restore writes a DTS
+  into it.

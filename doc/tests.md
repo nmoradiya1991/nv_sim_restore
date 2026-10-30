@@ -1,10 +1,10 @@
 # Tests
 
 Each test folder has a `Makefile`, `files.f` (every file, for the normal flow),
-`static.f` (the static image, for the DTL flow), `tb_top.sv` and the test
+`static.f` (the static image, for the DTL and DTR flows), `tb_top.sv` and the test
 packages:
 
-| Folder | Static (saved image) | Dynamic (DTL, loaded after the restore) |
+| Folder | Static (saved image) | Dynamic (DTL / DTR, loaded after the restore) |
 |:--|:--|:--|
 | `delayed_launch` | `dl_if.sv`, `tb_top.sv` | `test_pkg.sv` (all tests) |
 | `pre_domain` | `pre_tb_pkg.sv` (boot pre test), `tb_top.sv` | `main_tb_pkg.sv` (main test `soc_test_a`; `TOPO=v2` adds `env.soc_sb`) |

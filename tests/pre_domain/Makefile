@@ -17,7 +17,7 @@
 #                              (CL=0: +MAIN_SEED only)
 #
 # Topology: TOPO=v2 builds env.soc_sb in the same test (+define+TOPO_V2 on
-# main_tb_pkg). With FLOW=dtl the checkpoint is reused:
+# main_tb_pkg). With FLOW=dtl (or dtr, SIM=xrun) the checkpoint is reused:
 #   make compile save restore FLOW=dtl             topology v1
 #   make compile_pkg restore FLOW=dtl TOPO=v2      same checkpoint, v2
 #
@@ -35,15 +35,17 @@
 #                              cpu_agent -> cpu_agent_fast (type),
 #                              env.ddr_agt -> ddr_agent_lp (instance), cpu
 #                              main 250 over the env's own set, profile "perf"
-#   make restore_cl_drop       restore save_cl with no settings: the stale
-#                              ones are gone (the argv tables are rebuilt)
+#   make restore_cl_drop       restore save_cl with no settings: repopulate
+#                              flushes the stale ones (VCS); Xcelium still
+#                              reports them after the restart, so they stay
 #   make clean
 #
-# FLOW=dtl (VCS Dynamic Test Load): the saved image has the boot (pre test)
+# FLOW=dtl (VCS Dynamic Test Load) or FLOW=dtr SIM=xrun (Xcelium Dynamic Test
+# Reload): the saved image has the boot (pre test)
 # only; main_tb_pkg is loaded right after the restore and the main test is
 # built from it at release_main().
 #   static : pre_tb_pkg.sv, tb_top.sv (static.f)   dynamic: main_tb_pkg.sv
-#   restore_cl / restore_cl_drop restore the `save` checkpoint; save_cl and
+#   restore_cl restores the `save` checkpoint; save_cl, restore_cl_drop and
 #   the run_* targets are FLOW=std only (save_cl's stale overrides name
 #   main_tb_pkg classes, which the save run does not have).
 #
@@ -55,7 +57,7 @@ CKPT_NAME   ?= pre_ckpt_a
 SAVE_CKPT   := $(CKPT_NAME)
 CL_CKPT     ?= pre_ckpt_cl
 EXTRA_CKPTS  = $(CL_CKPT)
-DTL_PKG      = main_tb_pkg
+DYN_PKG      = main_tb_pkg
 MAIN_SEED   ?= 42
 CL          ?= 1
 
@@ -77,13 +79,13 @@ CL_OVR   = +uvm_set_type_override=cpu_agent,cpu_agent_fast \
            +uvm_set_config_string=uvm_test_top.env,profile,perf
 CL_EXP   = +EXP_CPU_TYPE=cpu_agent_fast +EXP_DDR_TYPE=ddr_agent_lp \
            +EXP_CPU_MAIN=250 +EXP_PROFILE=perf
-CL_EXP_DROP = +EXP_CPU_TYPE=cpu_agent +EXP_DDR_TYPE=ddr_agent \
-           +EXP_CPU_MAIN=100 +EXP_PROFILE=default
+CL_EXP_DROP = +EXP_DDR_TYPE=ddr_agent \
+           $(if $(filter xrun,$(SIM)),+EXP_CPU_TYPE=cpu_agent_slow +EXP_CPU_MAIN=5 +EXP_PROFILE=stale,+EXP_CPU_TYPE=cpu_agent +EXP_CPU_MAIN=100 +EXP_PROFILE=default)
 # CL=1 (default): restore also passes CL_OVR and checks it.
 RESTORE_CL = $(if $(filter 1,$(CL)),$(CL_OVR) $(CL_EXP))
 
-save_cl: CKPT_NAME = $(CL_CKPT)
-restore_cl restore_cl_drop: CKPT_NAME = $(if $(DTL),$(SAVE_CKPT),$(CL_CKPT))
+save_cl restore_cl_drop: CKPT_NAME = $(CL_CKPT)
+restore_cl: CKPT_NAME = $(if $(DYN),$(SAVE_CKPT),$(CL_CKPT))
 
 .PHONY: run_default run_pre_long run_jump_back run_jump_fwd \
         run_gate_timeout save restore \
@@ -124,4 +126,5 @@ restore_cl:
 	$(call sim_restore,restore_cl,$(CL_OVR) $(CL_EXP))
 
 restore_cl_drop:
+	$(call std_only,needs the save_cl checkpoint)
 	$(call sim_restore,restore_cl_drop,$(CL_EXP_DROP))

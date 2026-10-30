@@ -18,7 +18,7 @@ sequenceDiagram
     Boot->>Gate: trigger_test_launch()
     Gate->>Gate: suppress RUNPHSTIME
     Gate->>CLP: refresh_cmdline_parser_for_test_launch()
-    CLP-->>UVM: argv tables rebuilt from this invocation
+    CLP-->>UVM: argv tables flushed and rebuilt from this invocation
     UVM->>UVM: uvm_test_top = +UVM_TESTNAME, built at boot-done time
 ```
 
