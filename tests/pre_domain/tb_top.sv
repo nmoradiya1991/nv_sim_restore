@@ -1,5 +1,5 @@
 // ============================================================================
-// tb_top.sv -- Approach B, pre domain.
+// tb_top.sv -- domain-based proposal, pre domain.
 //
 // install_pre_domain() before run_test(): boot_pre_test (uvm_pre_top) runs
 // from time 0 in pre_dom; run_test() without a name creates no test at

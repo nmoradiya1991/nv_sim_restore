@@ -16,6 +16,12 @@
 //   +sim_finish_after_save            $finish right after the save
 // Plusargs (restored run):
 //   +sim_image_restore_enable         fire "sim_image_restored" after restore
+//   +sim_image_restore_file=<name>    checkpoint being restored, as given to
+//                                     +sim_image_save_file. Needed when a
+//                                     restored run saves again (a chain of
+//                                     checkpoints): only the save whose file
+//                                     matches counts as restored. Without it,
+//                                     only the first save is.
 //   +dtl_add_pkg=<dir>:<pkg>          VCS Dynamic Test Load: $dtl_load the
 //                                     package right after the restore, before
 //                                     "sim_image_restored" / "sim_image_saved"
@@ -29,7 +35,7 @@
 // Global uvm_events (uvm_event_pool::get_global), usable from module and
 // class code:
 //   "sim_image_save"     : request a save
-//   "sim_image_saved"    : save point passed (save run and restored run)
+//   "sim_image_saved"    : checkpoint passed (save run and restored run)
 //   "sim_image_restored" : the simulation was restored
 // Only one instance per testbench.
 // ============================================================================
@@ -53,7 +59,7 @@ module sim_save_restore;
   uvm_event        restored_ev;
 
   // The dynamic package's classes register with the factory when it is
-  // loaded, so it must be loaded before anything waiting on the save point
+  // loaded, so it must be loaded before anything waiting on the checkpoint
   // creates a test from it.
   task automatic dtl_load();
     string pkg;
@@ -72,10 +78,14 @@ module sim_save_restore;
   endtask
 
   task automatic save_image();
+    string ckpt_file;
     string save_file;
+    string restore_file;
+    bit    restored_here;
 
-    if (!$value$plusargs("sim_image_save_file=%s", save_file))
-      save_file = $sformatf("sim.%0dps.chk", longint'($realtime / 1ps));
+    if (!$value$plusargs("sim_image_save_file=%s", ckpt_file))
+      ckpt_file = $sformatf("sim.%0dps.chk", longint'($realtime / 1ps));
+    save_file = ckpt_file;
 `ifndef NV_SR_XCELIUM
     // Xcelium takes the bare checkpoint name, the same name given to xrun -r.
     save_file = {save_dir, "/", save_file};
@@ -86,7 +96,13 @@ module sim_save_restore;
 
     // A restored simulation resumes here, with the restore command line.
     #1ps;
-    if ($test$plusargs("sim_image_restore_enable") && !restored) begin
+    if ($test$plusargs("sim_image_restore_enable")) begin
+      if ($value$plusargs("sim_image_restore_file=%s", restore_file))
+        restored_here = (restore_file == ckpt_file);
+      else
+        restored_here = !restored;
+    end
+    if (restored_here) begin
       restored = 1'b1;
       $display("<%0t> SIM_IMAGE: simulation restored", $realtime);
       dtl_load();
@@ -94,7 +110,7 @@ module sim_save_restore;
     end
     saved_ev.trigger();
 
-    if ($test$plusargs("sim_finish_after_save") && !restored) begin
+    if ($test$plusargs("sim_finish_after_save") && !restored_here) begin
       $display("<%0t> SIM_IMAGE: +sim_finish_after_save, ending the save run",
                $realtime);
       $finish;

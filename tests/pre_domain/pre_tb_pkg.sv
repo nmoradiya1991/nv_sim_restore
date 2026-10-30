@@ -1,5 +1,5 @@
 // ============================================================================
-// pre_tb_pkg.sv -- Approach B, pre domain: the common boot (pre test), built
+// pre_tb_pkg.sv -- domain-based proposal, pre domain: the common boot (pre test), built
 // at time 0 in its own domain. STATIC in the DTL flow (part of the saved
 // image); the main tests are in main_tb_pkg.
 //
@@ -8,7 +8,7 @@
 //     env.fw_load_agt : fw_load_agent, main_phase <PRE_MAIN> (60) ns, set by
 //                       the env through uvm_config_db (main_delay)
 //     env.hb          : pd_run heartbeat, alive until after the main final
-//     main_phase      : boot <PRE_BOOT> (40) ns, save point A, release_main()
+//     main_phase      : boot <PRE_BOOT> (40) ns, boot checkpoint A, release_main()
 //
 // Command-line reprocessing targets: fw_load_agent -> fw_load_agent_fast
 // (type), uvm_pre_top.env.fw_load_agt main_delay (config_int); cl_expect

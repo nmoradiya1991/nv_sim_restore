@@ -6,7 +6,7 @@
 //   heartbeat    : run_phase loop without objections
 //   jump_once    : one runtime phase jump out of main_phase
 //   save_point   : request a sim image save (sim_save_restore.sv) and resume
-//                  once the save point is passed
+//                  once the checkpoint is passed
 //   cl_expect    : compare an observed value with +EXP_<key>=<value>
 //   cfg_agent    : phase_logger that takes main_delay (uvm_config_int) and
 //                  profile (uvm_config_string) from uvm_config_db
@@ -21,27 +21,43 @@ package tests_common_pkg;
   `include "uvm_macros.svh"
 
   // --------------------------------------------------------------------------
-  // Save point. take() is a no-op without +sim_image_save_enable. In the save
+  // Checkpoint. take() is a no-op without +sim_image_save_enable. In the save
   // run it returns right after the save (or the run ends there with
   // +sim_finish_after_save); a restored run resumes inside take() and
-  // returns with restored() == 1.
+  // returns with restored_here() == 1. A restored run can take a later
+  // checkpoint (a chain of checkpoints): restored() stays 1 from the first
+  // restore, restored_here() tells whether this checkpoint was restored.
   // --------------------------------------------------------------------------
   class save_point;
+    local static bit m_restored_here;
+
     static task automatic take(string where);
       uvm_event saved;
+      uvm_event restored_ev;
+      bit       was_restored;
+      time      restored_at;
       if (!$test$plusargs("sim_image_save_enable"))
         return;
-      saved = uvm_event_pool::get_global("sim_image_saved");
-      `uvm_info("SAVEPT", $sformatf("save point %s: requesting a sim image save @%0t",
+      saved        = uvm_event_pool::get_global("sim_image_saved");
+      restored_ev  = uvm_event_pool::get_global("sim_image_restored");
+      was_restored = restored_ev.is_on();
+      restored_at  = restored_ev.get_trigger_time();
+      `uvm_info("SAVEPT", $sformatf("checkpoint %s: requesting a sim image save @%0t",
                 where, $time), UVM_NONE)
       uvm_event_pool::get_global("sim_image_save").trigger();
       saved.wait_ptrigger();
-      `uvm_info("SAVEPT", $sformatf("save point %s passed @%0t (%s)", where, $time,
-                (restored() ? "restored run" : "save run")), UVM_NONE)
+      m_restored_here = restored_ev.is_on() &&
+                        (!was_restored || (restored_ev.get_trigger_time() != restored_at));
+      `uvm_info("SAVEPT", $sformatf("checkpoint %s passed @%0t (%s)", where, $time,
+                (m_restored_here ? "restored run" : "save run")), UVM_NONE)
     endtask
 
     static function bit restored();
       return uvm_event_pool::get_global("sim_image_restored").is_on();
+    endfunction
+
+    static function bit restored_here();
+      return m_restored_here;
     endfunction
   endclass
 

@@ -52,7 +52,7 @@
 #   DTR_BASE     FLOW=dtr: dynamic base snapshot name   (default dbs_base)
 #   TOPO         v1 | v2: v2 compiles the testbench with +define+TOPO_V2 (a
 #                different topology of the same test, in the package built
-#                after the save point). FLOW=dtl / dtr: only the dynamic
+#                after the checkpoint). FLOW=dtl / dtr: only the dynamic
 #                package gets it, so the existing checkpoint is reused:
 #                make compile_pkg restore FLOW=dtl|dtr TOPO=v2   (default v1)
 # ============================================================================
@@ -102,6 +102,9 @@ TB_FILES  = -f files.f
 SIM_ARGS  = +UVM_VERBOSITY=$(VERBOSITY) $(ARGS)
 SR_FINISH = $(if $(filter 1,$(SAVE_FINISH)),+sim_finish_after_save)
 LOG_TAG   = $(SIM)$(if $(DYN),_$(FLOW))
+# $(call ckpt_file,<name>): checkpoint file as given to +sim_image_save_file
+ckpt_file = $(if $(filter vcs,$(SIM)),$(1).chk,$(1))
+CKPT_FILE = $(call ckpt_file,$(CKPT_NAME))
 
 ifeq ($(SIM),vcs)
   VCS_HOME_ = $(or $(VCS_HOME),$(abspath $(dir $(shell which vcs 2>/dev/null))/..))
@@ -116,9 +119,10 @@ ifeq ($(SIM),vcs)
   RUN_CMD     = ./$(SIMV) $(SIM_ARGS)
   SAVE_CMD    = mkdir -p $(CKPT_DIR) && ./$(SIMV) $(SIM_ARGS) \
                 +sim_image_save_enable +sim_image_save_dir_path=$(CKPT_DIR) \
-                +sim_image_save_file=$(CKPT_NAME).chk $(SR_FINISH)
-  RESTORE_CMD = ./$(SIMV) -r $(CKPT_DIR)/$(CKPT_NAME).chk \
-                +sim_image_restore_enable $(DTL_ARGS) $(SIM_ARGS)
+                +sim_image_save_file=$(CKPT_FILE) $(SR_FINISH)
+  RESTORE_CMD = ./$(SIMV) -r $(CKPT_DIR)/$(CKPT_FILE) \
+                +sim_image_restore_enable +sim_image_restore_file=$(CKPT_FILE) \
+                $(DTL_ARGS) $(SIM_ARGS)
   TOOL_CHECK  = true
 
   # FLOW=dtl: three-step flow; the dynamic package is elaborated against the
@@ -155,9 +159,9 @@ else ifeq ($(SIM),xrun)
   RUN_CMD     = $(XRUN) -64bit -R -process_save -xmlibdirname $(XLIB) $(SIM_ARGS)
   SAVE_CMD    = $(XRUN) -64bit -R -process_save -xmlibdirname $(XLIB) \
                 $(SIM_ARGS) +sim_image_save_enable \
-                +sim_image_save_file=$(CKPT_NAME) $(SR_FINISH)
+                +sim_image_save_file=$(CKPT_FILE) $(SR_FINISH)
   RESTORE_CMD = $(XRUN) -64bit -r $(CKPT_NAME) \
-                +sim_image_restore_enable $(SIM_ARGS)
+                +sim_image_restore_enable +sim_image_restore_file=$(CKPT_FILE) $(SIM_ARGS)
   else
   # FLOW=dtr: the base snapshot never contains $(DYN_PKG); each restore
   # compiles it and links it with the saved snapshot (DTS) before restarting.
@@ -166,11 +170,12 @@ else ifeq ($(SIM),xrun)
   SAVE_CMD    = mkdir -p $(CKPT_DIR) && $(XRUN) -64bit -r $(DTR_BASE) -name $(DTR_BASE) \
                 -process_save -xmlibdirname $(XLIB) -cds_implicit_tmpdir $(CKPT_DIR) \
                 $(SIM_ARGS) +sim_image_save_enable \
-                +sim_image_save_file=$(CKPT_NAME) $(SR_FINISH)
+                +sim_image_save_file=$(CKPT_FILE) $(SR_FINISH)
   RESTORE_CMD = $(XRUN) $(XRUN_ELAB) -uvmnoautocompile $(TOPO_DEFS) $(LIB_INCS) \
                 $(DYN_PKG).sv -dbsname $(DTR_BASE) -dbssnap $(CKPT_NAME) \
                 -cds_alternate_tmpdir $(CKPT_DIR) $(XRUN_EXTRA) \
-                +sim_image_restore_enable +dtr_pkg=$(DYN_PKG) $(SIM_ARGS)
+                +sim_image_restore_enable +sim_image_restore_file=$(CKPT_FILE) \
+                +dtr_pkg=$(DYN_PKG) $(SIM_ARGS)
   endif
   TOOL_CHECK  = test -n "$(UVM_HOME)" && test -x "$(XRUN)" || \
                 { echo "SIM=xrun: set XCELIUM_HOME (or XRUN) and UVM_HOME"; exit 1; }
@@ -189,7 +194,7 @@ std_only    = $(if $(DYN),@echo "$@: not available with FLOW=$(FLOW): $(1)"; exi
 # $(call sim_run,<log name>,<plusargs>)
 sim_run     = $(if $(DYN),@echo "$@: not available with FLOW=$(FLOW): no restore so nothing loads $(DYN_PKG)"; exit 1,\
               mkdir -p $(LOG_DIR) && $(RUN_CMD) $(2) -l $(LOG_DIR)/$(1)_$(LOG_TAG).log)
-# $(call sim_save,<log name>,<plusargs>): save at the test's save point
+# $(call sim_save,<log name>,<plusargs>): save at the test's checkpoint
 sim_save    = mkdir -p $(LOG_DIR) && $(SAVE_CMD) $(2) -l $(LOG_DIR)/$(1)_$(LOG_TAG).log
 # $(call sim_restore,<log name>,<new plusargs>): restore $(CKPT_NAME)
 sim_restore = mkdir -p $(LOG_DIR) && $(RESTORE_CMD) $(2) -l $(LOG_DIR)/$(1)_$(LOG_TAG).log

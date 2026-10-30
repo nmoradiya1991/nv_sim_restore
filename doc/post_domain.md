@@ -1,4 +1,4 @@
-# Approach B — post domain
+# Domain-based proposal — post domain
 
 A post test in its own domain `post_dom` (`uvm_post_top`) joins the **running**
 main test at `release_post()`. Its runtime phases are synced with the main

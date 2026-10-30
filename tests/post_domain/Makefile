@@ -1,5 +1,5 @@
 # ============================================================================
-# post_domain -- Approach B: post test (pcie_post_test) built at
+# post_domain -- domain-based proposal: post test (pcie_post_test) built at
 # release_post() during the main test, runtime phases synced with it.
 #
 #   make compile               [SIM=vcs|xrun] [TOPO=v1|v2]
@@ -15,7 +15,7 @@
 #   make run_jump_main_fwd     main jumps main -> shutdown; mirrored on post
 #   make run_jump_post_back    post jumps main -> reset; mirrored on main
 #   make run_jump_nomirror     as run_jump_main_back, +PSDOM_NO_JUMP_MIRROR
-#   make save                  save point B (before release_post), $finish
+#   make save                  feature checkpoint B (before release_post), $finish
 #   make restore               restore B: same post test, +POST_MAIN, plus
 #                              the command-line overrides below, checked;
 #                              pcie_agt main is then 77, the command line
@@ -32,7 +32,7 @@
 #   make run_cl                no save: post-tree and main-tree settings on
 #                              the command line, post tree built at the
 #                              release
-#   make save_cl               save point B with STALE settings: pcie_driver
+#   make save_cl               checkpoint B with STALE settings: pcie_driver
 #                              -> pcie_driver_slow, post profile "stale",
 #                              main env post_window 1
 #   make restore_cl            restore save_cl with NEW settings: the

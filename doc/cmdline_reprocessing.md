@@ -116,7 +116,7 @@ not keep a copy of the settings; it reads the rewritten tables every time.
 | Command-line source | `uvm_dpi_get_next_arg()` | read it again at T != 0 |
 | Storage | the singleton's three tables | rewrite them (repopulate or merge) |
 | Queries | `get_arg_values()`, `get_arg_matches()`, `get_arg_value()` | — |
-| Test selection, first build | `run_test()`, `uvm_root::build_phase()` (delayed launch) | — |
+| Test selection, first build | `run_test()`, `uvm_root::build_phase()` (delayed UVM invocation) | — |
 | Applying settings | factory, `config_db`, report and timeout APIs | call them again when the first build is already over |
 | Testbench code | its own `get_arg_value(s)` calls | — (it sees the new values if it reads after the rewrite) |
 
@@ -125,6 +125,7 @@ not keep a copy of the settings; it reads the rewritten tables every time.
 | Flow | Point | Tables | Replay |
 |:--|:--|:--|:--|
 | `delayed_launch` | `trigger_test_launch`, before `run_test()` | repopulate | by UVM itself (`run_test()`) |
+| `delayed_launch`, restored from feature checkpoint C | right after C, in `dl_test_f` | merge | by the library |
 | `pre_domain` | `release_main()`, before the main-test build | repopulate | by the library |
 | `post_domain` | `release_post()`, before the post-domain build | merge | by the library |
 
@@ -135,8 +136,8 @@ the tables are already current.
 
 | API | Called by | Does |
 |:--|:--|:--|
-| `refresh_cmdline_parser_for_test_launch()` | delayed launch gate | steps 1 to 3 (repopulate) and the global verbosity; fatal if `uvm_test_top` exists |
-| `refresh_cmdline_parser_for_restore()` | save-context restore | steps 1 to 3 (merge) and step 4 |
+| `refresh_cmdline_parser_for_test_launch()` | delayed UVM invocation gate | steps 1 to 3 (repopulate) and the global verbosity; fatal if `uvm_test_top` exists |
+| `refresh_cmdline_parser_for_restore()` | restore of a feature checkpoint (the test exists) | steps 1 to 3 (merge) and step 4 |
 | `refresh_cmdline_for_late_build(who)` | pre / post domain controllers | picks repopulate or merge, then step 4; no-op at time 0 or if already done |
 | `reapply_cmdline_settings()` | the refresh paths | step 4 |
 | `reapply_report_settings_for_late_build(who)` | pre / post controllers, start of connect | report switches for components created after step 4 |

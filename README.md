@@ -1,8 +1,12 @@
 # nv_sim_restore
 
-A UVM library for building the testbench at non-zero time: after a boot, after
-a checkpoint restore, or during the main test. Each late build reprocesses the
-command line first. Supported on VCS and Xcelium, with UVM 1.2 or IEEE 1800.2.
+A UVM library for building the testbench at non-zero time, so that one
+checkpoint serves many tests: **delayed UVM invocation** (`run_test()` after
+the boot or after a restore of the boot checkpoint), **command-line
+reprocessing** (the restore's UVM args select the test or the scenario, also
+after a feature checkpoint), and the **domain-based proposal** (pre / post
+domain) where the boot cannot leave UVM. Supported on VCS and Xcelium, with
+UVM 1.2 or IEEE 1800.2.
 
 ## Repository layout
 
@@ -12,9 +16,9 @@ nv_sim_restore/
 ├── doc/                      design and usage documentation
 └── tests/
     ├── common/               common.mk, sim_save_restore.sv, tests_common_pkg.sv
-    ├── delayed_launch/       Approach A: run_test() after the boot
-    ├── pre_domain/           Approach B: boot in the pre domain, main test at release
-    └── post_domain/          Approach B: post test built during the main test
+    ├── delayed_launch/       delayed UVM invocation: run_test() after the boot; feature checkpoint C
+    ├── pre_domain/           domain-based proposal: boot in the pre domain, main test at release
+    └── post_domain/          domain-based proposal: post test built during the main test
 ```
 
 Each test folder has a `Makefile`, `files.f` (all files), `static.f` (DTL /
@@ -24,10 +28,10 @@ DTR static image) and `tb_top.sv`. `make help` lists the folder's targets.
 
 | Doc | Contents |
 |:--|:--|
-| [doc/overview.md](doc/overview.md) | the problem, approaches, package files, topology over time |
-| [doc/delayed_launch.md](doc/delayed_launch.md) | Approach A: delayed `run_test()` |
-| [doc/pre_domain.md](doc/pre_domain.md) | Approach B: pre domain |
-| [doc/post_domain.md](doc/post_domain.md) | Approach B: post domain |
+| [doc/overview.md](doc/overview.md) | the problem, checkpoints, solution space, checkpoint life, UVM time-zero assumptions, package files |
+| [doc/delayed_launch.md](doc/delayed_launch.md) | delayed UVM invocation: delayed `run_test()`, feature checkpoint C |
+| [doc/pre_domain.md](doc/pre_domain.md) | domain-based proposal: pre domain |
+| [doc/post_domain.md](doc/post_domain.md) | domain-based proposal: post domain |
 | [doc/cmdline_strategy.md](doc/cmdline_strategy.md) | why and how the UVM command line is reprocessed: repopulate vs. merge, precedence, diagrams |
 | [doc/cmdline_reprocessing.md](doc/cmdline_reprocessing.md) | how the command-line tables are reread, rewritten and reused, API |
 | [doc/save_restore.md](doc/save_restore.md) | save / restore, Xcelium `-process_save`, VCS Dynamic Test Load, Xcelium Dynamic Test Reload |
@@ -55,7 +59,7 @@ Optional make variables:
 | `VCS_EXTRA` / `XRUN_EXTRA` | — | extra compile options |
 | `DTL_ELAB_OPTS` | `-full64 -sverilog +vcs+lic+wait` | `FLOW=dtl`: options of both elaborations (must match) |
 | `DTR_BASE` | `dbs_base` | `FLOW=dtr`: name of the dynamic base snapshot |
-| `TOPO` | `v1` | `v2`: `pre_domain` / `post_domain` compile the package built after the save point with `+define+TOPO_V2`, a different topology of the same test |
+| `TOPO` | `v1` | `v2`: `pre_domain` / `post_domain` compile the package built after the checkpoint with `+define+TOPO_V2`, a different topology of the same test |
 | `CL` | `1` | `pre_domain` / `post_domain`: `make restore` also passes and checks command-line overrides; `0`: off |
 
 Logs go to `tests/<folder>/logs/<target>_<sim>[_dtl|_dtr].log`.
@@ -69,18 +73,22 @@ cd tests/post_domain            # or delayed_launch, pre_domain
 
 make compile                    # build
 make run_default                # plain run, no save
-make save                       # run to the save point, save, $finish
+make save                       # run to the checkpoint, save, $finish
 make restore                    # restore and continue with a new command line
 make clean
 ```
 
-| Folder | Save point | Built after the restore | Restore example |
+| Folder | Checkpoint | Built after the restore | Restore example |
 |:--|:--|:--|:--|
-| `delayed_launch` | A: boot done, no UVM tree | the whole UVM test | `make restore TEST=dl_test_b DL_MODE=7 N_ITEMS=8` |
-| `pre_domain` | A: boot done, main test not built | main test `soc_test_a` | `make restore MAIN_SEED=42` |
-| `post_domain` | B: main test running, post test not built | post test `pcie_post_test` | `make restore POST_MAIN=50` |
+| `delayed_launch` | boot checkpoint A: boot done, no UVM tree | the whole UVM test | `make restore TEST=dl_test_b DL_MODE=7 N_ITEMS=8` |
+| `delayed_launch` | feature checkpoint C: `dl_test_f` after IP init and pipeline fill | the common scenario sequence | `make restore_c SCENARIO=5` |
+| `pre_domain` | boot checkpoint A: boot done, main test not built | main test `soc_test_a` | `make restore MAIN_SEED=42` |
+| `post_domain` | feature checkpoint B: main test running, post test not built | post test `pcie_post_test` | `make restore POST_MAIN=50` |
 
-In `delayed_launch`, use `run_delayed` instead of `run_default`.
+In `delayed_launch`, use `run_delayed` instead of `run_default`. Checkpoint
+A and C are each saved from scratch: `make save restore` tests delayed UVM
+invocation, `make save_c restore_c restore_c_keep` (`FLOW=std` only) tests
+the merge and reapply at a feature checkpoint.
 
 In `pre_domain` and `post_domain` the restore keeps the same test. The new
 command line changes how its tree is built, and the dynamic package (`TOPO`)
@@ -121,7 +129,7 @@ make restore FLOW=dtl               # then restore the SAME checkpoint; no new s
 ### Xcelium Dynamic Test Reload
 
 Same idea on Xcelium. `compile` builds the dynamic base snapshot (DBS)
-from `static.f` with `-mkdbssnap`. `save` runs it to the save point. Each
+from `static.f` with `-mkdbssnap`. `save` runs it to the checkpoint. Each
 `restore` compiles the dynamic package and links it with the saved snapshot
 (`-dbsname` / `-dbssnap`, the dynamic test snapshot), then restarts from it.
 There is no separate package build: every restore picks up the current
@@ -139,7 +147,7 @@ make restore SIM=xrun FLOW=dtr TOPO=v2           # same checkpoint, new topology
 
 ## What to expect after a restore
 
-In every folder, `make save` stops at the save point, before the part of the
+In every folder, `make save` stops at the checkpoint, before the part of the
 testbench built after it exists. `make restore` then builds that part from
 the **new** command line, with no recompile. The excerpts below are from the
 VCS runs of
@@ -200,7 +208,7 @@ place instead (`+dtr_pkg`; xrun links the package before the restart):
 > restore. You can edit it (add or remove agents, scoreboards and
 > coverage, change the topology of the same test), recompile **only that
 > package**, and restore the **same snapshot** again. No new save, no
-> rerun of the boot or the main test up to the save point.
+> rerun of the boot or the main test up to the checkpoint.
 >
 > ```bash
 > make compile save restore FLOW=dtl        # once: save; restore with topology v1
@@ -218,7 +226,7 @@ place instead (`+dtr_pkg`; xrun links the package before the restart):
 > With `FLOW=std`, the testbench code is frozen inside the checkpoint, so any
 > change to it needs a recompile and a new save. The only rule with DTL / DTR
 > is that the static part (`static.f`: `tb_top`, the DUT, and the packages
-> already alive at the save point) must not change. If it does, rerun
+> already alive at the checkpoint) must not change. If it does, rerun
 > `make compile save FLOW=dtl` (or `SIM=xrun FLOW=dtr`).
 
 ### delayed_launch: the whole UVM test is built after the restore
@@ -230,7 +238,7 @@ topology exists. The save command line carries **stale** settings
 
 ```
 [tb_top] @131000000 boot done: 16 firmware words loaded
-[SAVEPT] save point A (boot done, no UVM topology): requesting a sim image save @131000000
+[SAVEPT] checkpoint A (boot done, no UVM topology): requesting a sim image save @131000000
 <131000000> SIM_IMAGE: saving checkpoint ckpt_vcs/dl_ckpt_cl.chk
 ```
 
@@ -263,6 +271,59 @@ uvm_test_top  dl_test_b
 [CL_EXPECT] 4 expectation(s) checked, 0 failed
 ```
 
+### delayed_launch: feature checkpoint C, merge and reapply
+
+> [!NOTE]
+> Expected outcome, from the code; these targets have not been run yet, so
+> times are left out (`@<t>`).
+
+```bash
+make compile save_c restore_c restore_c_keep      # SIM=vcs or xrun, FLOW=std
+```
+
+`save_c` is a run from scratch with delayed UVM invocation: the boot runs in
+SV, no checkpoint A is taken (`+DL_FEATURE_SAVE`), and the gate launches the
+feature test `dl_test_f` with a **stale** scenario 1. The test runs IP init
+and the pipeline fill, then saves C and stops:
+
+```
+[NV_SOCV_CMDLINE_PROCESSOR/REPOPULATE] Command line repopulated
+[RNTST] Running test dl_test_f...
+[FEAT] IP init and pipeline fill done @<t>: <n_items + 4> word(s)
+[SAVEPT] checkpoint C (feature: IP init and pipeline fill done): requesting a sim image save @<t>
+```
+
+`restore_c` restores C. `uvm_test_top` exists, so the restore arguments are
+**merged** and reapplied, and the common sequence created after C picks the
+new scenario (3) and the `dl_scenario_seq_long` override:
+
+```
+[SAVEPT] checkpoint C (feature: IP init and pipeline fill done) passed @<t> (restored run)
+[NV_SOCV_CMDLINE_PROCESSOR/APPEND] Command-line args merged
+[NV_SOCV_CMDLINE_PROCESSOR/REAPPLY] Applying type override: +uvm_set_type_override=dl_scenario_seq,dl_scenario_seq_long
+[NV_SOCV_CMDLINE_PROCESSOR/REAPPLY] Applying config int: +uvm_set_config_int=uvm_test_top.env,scenario,1
+[NV_SOCV_CMDLINE_PROCESSOR/REAPPLY] Applying config int: +uvm_set_config_int=uvm_test_top.env,scenario,3
+[NV_SOCV_CMDLINE_PROCESSOR/REAPPLY] UVM command-line settings reapplied
+[SCN] dl_scenario_seq_long: scenario 3, 12 word(s) @<t>
+[CL_EXPECT] SCENARIO = 3 as expected (config_int read after C)
+[CL_EXPECT] SEQ_TYPE = dl_scenario_seq_long as expected (factory override, object created after C)
+[CL_EXPECT] 2 expectation(s) checked, 0 failed
+```
+
+The merge keeps the stale `scenario,1` from the run that saved C and adds the
+new one after it, so the new one wins. `restore_c_keep` passes no settings:
+the same checkpoint then runs the scenario of the run that saved it:
+
+```
+[SCN] dl_scenario_seq: scenario 1, 2 word(s) @<t>
+[CL_EXPECT] SCENARIO = 1 as expected (config_int read after C)
+[CL_EXPECT] SEQ_TYPE = dl_scenario_seq as expected (factory override, object created after C)
+[CL_EXPECT] 2 expectation(s) checked, 0 failed
+```
+
+The merge also reports a `[NV_SOCV_CMDLINE_PROCESSOR/OVERRIDE]` line for
+each plusarg given a different value by the restore.
+
 ### pre_domain: the boot tree is saved, the main test is built after the restore
 
 Save (50 ns): `uvm_pre_top` (the boot test in the `pre_dom` domain) is built
@@ -272,7 +333,7 @@ exist yet.
 ```
 [NV_SOCV_CMDLINE_PROCESSOR/EARLY_BUILD] Applying command-line factory/config settings before the pre-domain build
 [PRE] pre test built @0
-[SAVEPT] save point A (boot done, main test not built): requesting a sim image save @50000000
+[SAVEPT] checkpoint A (boot done, main test not built): requesting a sim image save @50000000
 ```
 
 Restore: the gate releases the main test. The library repopulates the
@@ -336,7 +397,7 @@ post domain is installed, but its tree is not built.
 
 ```
 [PSDOM] Post domain 'post_dom' installed (post test pcie_post_test); waits for release_post()
-[SAVEPT] save point B (post domain not built): requesting a sim image save @40000000
+[SAVEPT] checkpoint B (feature: post domain not built): requesting a sim image save @40000000
 ```
 
 Restore: the main tree already exists, so the restore arguments are

@@ -1,5 +1,5 @@
 // ============================================================================
-// tb_top.sv -- Approach B, post domain.
+// tb_top.sv -- domain-based proposal, post domain.
 //
 // Plain run_test(): soc_main_test is built at time 0 and its env installs
 // the post domain. The post test is created at release_post(), after the

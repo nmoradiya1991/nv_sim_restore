@@ -1,5 +1,5 @@
 // ============================================================================
-// post_tb_pkg.sv -- Approach B, post domain: the post test, built at
+// post_tb_pkg.sv -- domain-based proposal, post domain: the post test, built at
 // release_post() during the main test, runtime phases synced. DYNAMIC in the
 // DTL flow: not in the saved image, loaded after the restore with
 // +dtl_add_pkg=<dir>:post_tb_pkg.

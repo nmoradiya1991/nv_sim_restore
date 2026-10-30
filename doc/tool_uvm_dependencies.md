@@ -183,7 +183,7 @@ they detect a new simulator or UVM release that behaves differently:
 | UVM library (VCS) | `UVM_VER=<lib>`, passed as `-ntb_opts <lib>`; `uvm-1.2` (default), `uvm-ieee-2020`, `uvm-ieee-2020-2.0`, `uvm-ieee-2020-3.1` | the UVM library VCS compiles with | `make compile save restore SIM=vcs UVM_VER=uvm-ieee-2020-3.1` |
 | UVM library (Xcelium) | `UVM_HOME=<path>`, passed as `-uvmhome <path>` | the UVM library Xcelium compiles with | `make compile save restore SIM=xrun UVM_HOME=CDNS-IEEE` |
 | Flow | `FLOW=std\|dtl\|dtr` | plain save/restore, VCS Dynamic Test Load (`dtl`) or Xcelium Dynamic Test Reload (`dtr`) | `make compile save restore SIM=xrun FLOW=dtr` |
-| Target | `save` / `restore`, `save_cl` / `restore_cl`, `restore_cl_drop`, `restore_cl_keep` | which checkpoint and which restore command line | `make save_cl restore_cl_drop` |
+| Target | `save` / `restore`, `save_cl` / `restore_cl`, `restore_cl_drop`, `restore_cl_keep`, `save_c` / `restore_c`, `restore_c_keep` (`delayed_launch`) | which checkpoint and which restore command line | `make save_cl restore_cl_drop` |
 | Repeated arguments | `ARGS=+NV_SOCV_CMDLINE_PRECEDENCE=first\|last` | which occurrence of a repeated setting is kept | `make restore_cl SIM=xrun ARGS=+NV_SOCV_CMDLINE_PRECEDENCE=last` |
 | Global verbosity | `VERBOSITY=<verb>`, passed as `+UVM_VERBOSITY=<verb>` (default `UVM_MEDIUM`) | the global verbosity; give the restore a different value from the save run's | `make restore VERBOSITY=UVM_HIGH` |
 

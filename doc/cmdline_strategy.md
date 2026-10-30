@@ -58,9 +58,10 @@ point also get the report settings
 
 | Flow | Reprocessing point |
 |:--|:--|
-| Approach A, `delayed_launch` | the test launch after the boot (`trigger_test_launch()`) |
-| Approach B, `pre_domain` | `release_main()`: right before the main test is built |
-| Approach B, `post_domain` | `release_post()`: right before the post test is built |
+| Delayed UVM invocation, `delayed_launch` | the test launch after the boot (`trigger_test_launch()`) |
+| Delayed UVM invocation, `delayed_launch` restored from feature checkpoint C | right after C, before the common sequence is created (`refresh_cmdline_parser_for_restore()`) |
+| Domain-based proposal, `pre_domain` | `release_main()`: right before the main test is built |
+| Domain-based proposal, `post_domain` | `release_post()`: right before the post test is built |
 
 It happens once per run, never at time 0 (at time 0 the tables are already
 current). Between the restore and the reprocessing point, the tables still
@@ -177,7 +178,7 @@ flowchart LR
 Example (`tests/post_domain`):
 
 ```bash
-make save_cl          # save point B, before release_post():
+make save_cl          # feature checkpoint B, before release_post():
                       #   +uvm_set_type_override=pcie_driver,pcie_driver_slow
                       #   +uvm_set_config_string=uvm_post_top.env,profile,stale
                       #   +uvm_set_config_int=uvm_test_top.env,post_window,1
@@ -192,6 +193,11 @@ profile `gen5`, and the main env, which reads `post_window` again after the
 release, gets 40. With `restore_cl_keep` the save run's settings stay in
 effect (`pcie_driver_slow`, `stale`, `post_window` 1), since they are part
 of the topology's state.
+
+The same merge serves the feature checkpoint C of `tests/delayed_launch`:
+`make save_c` saves C with `scenario,1`; `make restore_c` adds `scenario,3`
+and `dl_scenario_seq→dl_scenario_seq_long`, which the common sequence created
+after C picks up; `make restore_c_keep` keeps scenario 1.
 
 A `+UVM_<OPTION>` replaced in place (illustration with `+UVM_TIMEOUT`):
 

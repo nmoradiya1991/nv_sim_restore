@@ -1,5 +1,5 @@
 // ============================================================================
-// main_tb_pkg.sv -- Approach B, post domain: the main test, built at time 0.
+// main_tb_pkg.sv -- domain-based proposal, post domain: the main test, built at time 0.
 // STATIC in the DTL flow (part of the saved image); the post test is in
 // post_tb_pkg.
 //
@@ -8,7 +8,7 @@
 //     env.hb      : run_phase heartbeat
 //     env         : installs the post domain (pcie_post_test) in build_phase
 //     release     : <RELEASE_DELAY> (30) ns into <RELEASE_PHASE> (main):
-//                   save point B (+SAVE_BEFORE_RELEASE), then release_post()
+//                   feature checkpoint B (+SAVE_BEFORE_RELEASE), then release_post()
 //
 // Command-line reprocessing targets, main tree (already built at time 0),
 // after the post domain started: env re-reads post_window (config_int) and
@@ -20,7 +20,7 @@
 //   +RELEASE_PHASE=<name>  main runtime phase that triggers the release (main)
 //   +RELEASE_DELAY=<ns>    delay after that phase starts (30)
 //   +NO_RELEASE            never release: post domain skipped
-//   +SAVE_BEFORE_RELEASE   save point B before release_post()
+//   +SAVE_BEFORE_RELEASE   feature checkpoint B before release_post()
 //   +MAIN_JUMP_TO / +MAIN_JUMP_AT=<ns> (50)   main test jump out of main_phase
 // ============================================================================
 
@@ -125,7 +125,7 @@ package main_tb_pkg;
         begin
           #(release_delay);
           if (save_before_release)
-            save_point::take("B (post domain not built)");
+            save_point::take("B (feature: post domain not built)");
           post_domain_controller::release_post($sformatf("main %s_phase + %0d ns%s",
             release_phase, release_delay,
             (save_point::restored() ? ", restored run" : "")));

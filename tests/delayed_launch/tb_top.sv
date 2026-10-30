@@ -1,9 +1,11 @@
 // ============================================================================
-// tb_top.sv -- Approach A: delay run_test() until after the boot.
+// tb_top.sv -- delayed UVM invocation: run_test() only after the boot.
 //
 //   boot       : pure SV (no UVM component): reset, then FW_WORDS firmware
-//                words; pins held at legal idle values. Then save point A
-//                (+sim_image_save_enable) and trigger_test_launch().
+//                words; pins held at legal idle values. Then boot checkpoint
+//                A (+sim_image_save_enable; skipped with +DL_FEATURE_SAVE,
+//                where the test takes feature checkpoint C instead) and
+//                trigger_test_launch().
 //   launch     : wait_for_test_launch_trigger() blocks until the trigger
 //                when +NV_SOCV_DELAYED_TEST_LAUNCH is given (no-op without
 //                it: classic run_test() at time 0), refreshes the command
@@ -16,6 +18,7 @@
 //   +BOOT_NS=<ns>                 reset length (default 100)
 //   +FW_WORDS=<n>                 firmware words loaded after reset (16)
 //   +UVM_TESTNAME=<name>          test (default dl_test_a)
+//   +DL_FEATURE_SAVE              no checkpoint A; dl_test_f saves C
 //   +sim_image_*                  save/restore (common/sim_save_restore.sv)
 // ============================================================================
 
@@ -53,7 +56,8 @@ module tb_top;
     repeat (fw_words) @(posedge clk) fw_loaded++;
     $display("[tb_top] @%0t boot done: %0d firmware words loaded", $time, fw_loaded);
 
-    save_point::take("A (boot done, no UVM topology)");
+    if (!$test$plusargs("DL_FEATURE_SAVE"))
+      save_point::take("A (boot done, no UVM topology)");
     nv_socv_delayed_test_launch::trigger_test_launch();
   end
 

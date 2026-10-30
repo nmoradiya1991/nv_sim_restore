@@ -1,4 +1,4 @@
-# Approach B — pre domain
+# Domain-based proposal — pre domain
 
 The common boot lives in its own UVM domain `pre_dom` (`uvm_pre_top`, built at
 time 0). The main test is built when the boot calls `release_main()`; the pre

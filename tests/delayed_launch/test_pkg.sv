@@ -1,5 +1,6 @@
 // ============================================================================
-// test_pkg.sv -- Approach A: tests launched by run_test() after the boot.
+// test_pkg.sv -- delayed UVM invocation: tests launched by run_test() after
+// the boot.
 //
 //   dl_test_a (uvm_test_top)
 //     env.drv : drives n_items words on dl_if after rst_n, gap idle cycles
@@ -7,6 +8,14 @@
 //   dl_test_b (uvm_test_top), same checkpoint, different topology
 //     env.drv : as dl_test_a
 //     env.chk : counts the words on the pins, checks against env.drv
+//   dl_test_f (uvm_test_top), feature test: dl_test_b, then IP init
+//               (n_items words) and pipeline fill (4 words), then feature
+//               checkpoint C (+DL_FEATURE_SAVE), then the common sequence
+//               dl_scenario_seq: scenario from
+//               +uvm_set_config_int=uvm_test_top.env,scenario,<n> (0),
+//               scenario * burst words, burst 2 (dl_scenario_seq_long: 4).
+//               Restored from C: merge + reapply, then the sequence is
+//               created; checked with cl_expect keys SCENARIO, SEQ_TYPE.
 //
 // Both tests publish "dl_mode" (+DL_MODE=<n>, default 1) in uvm_config_db
 // from their build_phase; tb_top reads it from module code through
@@ -42,6 +51,7 @@ package test_pkg;
     uvm_bitstream_t  n_items = 4;
     int unsigned     gap     = 1;
     int unsigned     n_sent;
+    bit              init_done;
 
     function new(string name, uvm_component parent);
       super.new(name, parent);
@@ -55,10 +65,9 @@ package test_pkg;
                 get_type_name(), $time, n_items, gap), UVM_LOW)
     endfunction
 
-    virtual task main_phase(uvm_phase phase);
-      phase.raise_objection(this);
-      wait (vif.rst_n === 1'b1);
-      repeat (n_items) begin
+    // Drives n words, numbered from n_sent, with gap idle cycles after each.
+    task drive(int unsigned n);
+      repeat (n) begin
         @(posedge vif.clk);
         vif.vld  <= 1'b1;
         vif.data <= 8'(n_sent);
@@ -70,6 +79,13 @@ package test_pkg;
       end
       @(posedge vif.clk);
       vif.vld <= 1'b0;
+    endtask
+
+    virtual task main_phase(uvm_phase phase);
+      phase.raise_objection(this);
+      wait (vif.rst_n === 1'b1);
+      drive(n_items);
+      init_done = 1;
       `uvm_info("DRV", $sformatf("%0d words driven, done @%0t", n_sent, $time), UVM_LOW)
       phase.drop_objection(this);
     endtask
@@ -219,6 +235,74 @@ package test_pkg;
     virtual function void configure_env();
       env.has_checker = 1;
     endfunction
+  endclass
+
+  // Common sequence of the feature test, started after feature checkpoint C.
+  // The scenario selector comes from config_db
+  // (+uvm_set_config_int=uvm_test_top.env,scenario,<n>); the behaviour within
+  // the scenario from the factory (dl_scenario_seq_long drives longer bursts).
+  // Runs without a sequencer: it drives through env.drv.
+  class dl_scenario_seq extends uvm_sequence #(uvm_sequence_item);
+    `uvm_object_utils(dl_scenario_seq)
+
+    dl_env          env;
+    uvm_bitstream_t scenario = 0;
+    int unsigned    burst    = 2;
+
+    function new(string name = "dl_scenario_seq");
+      super.new(name);
+    endfunction
+
+    virtual task body();
+      void'(uvm_config_int::get(env, "", "scenario", scenario));
+      `uvm_info("SCN", $sformatf("%s: scenario %0d, %0d word(s) @%0t",
+                get_type_name(), scenario, scenario * burst, $time), UVM_LOW)
+      env.drv.drive(scenario * burst);
+    endtask
+  endclass
+
+  class dl_scenario_seq_long extends dl_scenario_seq;
+    `uvm_object_utils(dl_scenario_seq_long)
+    function new(string name = "dl_scenario_seq_long");
+      super.new(name);
+      burst = 4;
+    endfunction
+  endclass
+
+  // Feature test: dl_test_b, then the stages common to every scenario
+  // (IP init: env.drv drives n_items; pipeline fill: fill_words more), then
+  // feature checkpoint C (+DL_FEATURE_SAVE), then the common sequence.
+  // Restored from C, the command line is merged into the UVM tables and
+  // reapplied before the sequence is created, so the restore's scenario
+  // selector and factory override reach it.
+  class dl_test_f extends dl_test_b;
+    `uvm_component_utils(dl_test_f)
+
+    int unsigned fill_words = 4;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual task main_phase(uvm_phase phase);
+      dl_scenario_seq seq;
+      phase.raise_objection(this);
+      wait (env.drv.init_done);
+      env.drv.drive(fill_words);
+      `uvm_info("FEAT", $sformatf("IP init and pipeline fill done @%0t: %0d word(s)",
+                $time, env.drv.n_sent), UVM_NONE)
+      if ($test$plusargs("DL_FEATURE_SAVE")) begin
+        save_point::take("C (feature: IP init and pipeline fill done)");
+        if (save_point::restored_here())
+          nv_socv_cmdline_processor::refresh_cmdline_parser_for_restore();
+      end
+      seq = dl_scenario_seq::type_id::create("seq");
+      seq.env = env;
+      seq.start(null);
+      cl_expect::check_int("SCENARIO", seq.scenario, "config_int read after C");
+      cl_expect::check("SEQ_TYPE", seq.get_type_name(), "factory override, object created after C");
+      phase.drop_objection(this);
+    endtask
   endclass
 
 endpackage

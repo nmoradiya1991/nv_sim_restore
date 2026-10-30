@@ -1,20 +1,33 @@
 # ============================================================================
-# delayed_launch -- Approach A: run_test() after the boot / after restore.
+# delayed_launch -- delayed UVM invocation: run_test() after the boot / after
+# restore.
 #
 #   make compile               [SIM=vcs|xrun]
 #   make run_classic           no gate: test built at time 0, boot in parallel
 #   make run_delayed           gate: boot in SV, dl_test_a built at boot done
 #   make run_delayed_b         same, +UVM_TESTNAME=dl_test_b (adds env.chk)
-#   make save                  save point A (boot done, no UVM tree), $finish
+#   make save                  boot checkpoint A (boot done, no UVM tree), $finish
 #   make restore               restore A: $(TEST), +DL_MODE=$(DL_MODE),
 #                              n_items=$(N_ITEMS) via +uvm_set_config_int
 #   make restore_a             restore A with dl_test_a and the defaults
+#
+# Feature checkpoint C (FLOW=std), saved from scratch like A: boot, gated
+# run_test() of the feature test dl_test_f (delayed UVM invocation), IP init
+# and pipeline fill, then C; the common sequence after C picks the scenario:
+#   make run_feature           no save: dl_test_f with scenario $(SCENARIO)
+#   make save_c                from scratch: dl_test_f with a STALE scenario
+#                              1, no checkpoint A, save C, $finish
+#   make restore_c             restore C (merge + reapply) with NEW settings:
+#                              scenario $(SCENARIO), sequence ->
+#                              dl_scenario_seq_long (type override)
+#   make restore_c_keep        restore C with no settings: merge keeps
+#                              scenario 1 and dl_scenario_seq
 #
 # Command-line reprocessing (factory overrides / config at non-zero time,
 # checked with +EXP_*; see "CL_EXPECT" in the log):
 #   make run_cl                no save: overrides on the command line, test
 #                              built at boot done after the refresh
-#   make save_cl               save point A with STALE settings on the save
+#   make save_cl               checkpoint A with STALE settings on the save
 #                              command line: driver -> dl_driver_slow,
 #                              n_items 2, profile "stale"
 #   make restore_cl            restore save_cl with NEW settings: driver ->
@@ -33,19 +46,21 @@
 #   make compile_pkg FLOW=dtl  after editing test_pkg.sv; restore again
 #   make compile save restore SIM=xrun FLOW=dtr  (restore compiles test_pkg)
 #   static : dl_if.sv, tb_top.sv (static.f)    dynamic: test_pkg.sv
-#   run_* targets are FLOW=std only.
+#   run_*, save_c and restore_c* targets are FLOW=std only.
 #
 #   Overrides: TEST=dl_test_b DL_MODE=7 N_ITEMS=8 CKPT_NAME=dl_ckpt_a
-#              ARGS='+...' VERBOSITY=UVM_LOW
+#              SCENARIO=3 ARGS='+...' VERBOSITY=UVM_LOW
 # ============================================================================
 
 CKPT_NAME   ?= dl_ckpt_a
 CL_CKPT     ?= dl_ckpt_cl
-EXTRA_CKPTS  = $(CL_CKPT)
+FEAT_CKPT   ?= dl_ckpt_c
+EXTRA_CKPTS  = $(CL_CKPT) $(FEAT_CKPT)
 DYN_PKG      = test_pkg
 TEST        ?= dl_test_b
 DL_MODE     ?= 7
 N_ITEMS     ?= 8
+SCENARIO    ?= 3
 
 include ../common/common.mk
 
@@ -71,8 +86,20 @@ CL_EXP_DROP = +UVM_TESTNAME=dl_test_b +EXP_CHK_TYPE=dl_checker \
 
 save_cl restore_cl restore_cl_drop: CKPT_NAME = $(CL_CKPT)
 
+# Feature checkpoint C: the run that saves it gets a stale scenario; the
+# restores from C get new settings, or none.
+FEAT_TEST     = +UVM_TESTNAME=dl_test_f
+FEAT_STALE    = +uvm_set_config_int=uvm_test_top.env,scenario,1
+FEAT_NEW      = +uvm_set_config_int=uvm_test_top.env,scenario,$(SCENARIO) \
+                +uvm_set_type_override=dl_scenario_seq,dl_scenario_seq_long
+FEAT_EXP      = +EXP_SCENARIO=$(SCENARIO) +EXP_SEQ_TYPE=dl_scenario_seq_long
+FEAT_EXP_KEEP = +EXP_SCENARIO=1 +EXP_SEQ_TYPE=dl_scenario_seq
+
+save_c restore_c restore_c_keep: CKPT_NAME = $(FEAT_CKPT)
+
 .PHONY: run_classic run_delayed run_delayed_b save restore restore_a \
-        run_cl save_cl restore_cl restore_cl_drop
+        run_cl save_cl restore_cl restore_cl_drop \
+        run_feature save_c restore_c restore_c_keep
 
 run_classic:
 	$(call sim_run,run_classic,)
@@ -104,3 +131,18 @@ restore_cl:
 
 restore_cl_drop:
 	$(call sim_restore,restore_cl_drop,$(GATE) $(CL_EXP_DROP))
+
+run_feature:
+	$(call sim_run,run_feature,$(GATE) $(FEAT_TEST) $(FEAT_NEW) $(FEAT_EXP))
+
+save_c:
+	$(call std_only,the save run would need test_pkg)
+	$(call sim_save,save_c,$(GATE) $(FEAT_TEST) $(FEAT_STALE) +DL_FEATURE_SAVE)
+
+restore_c:
+	$(call std_only,checkpoint C is saved with FLOW=std)
+	$(call sim_restore,restore_c,$(FEAT_NEW) $(FEAT_EXP))
+
+restore_c_keep:
+	$(call std_only,checkpoint C is saved with FLOW=std)
+	$(call sim_restore,restore_c_keep,$(FEAT_EXP_KEEP))

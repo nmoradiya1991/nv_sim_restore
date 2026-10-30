@@ -1,5 +1,5 @@
 // ============================================================================
-// main_tb_pkg.sv -- Approach B, pre domain: the main test, built when the
+// main_tb_pkg.sv -- domain-based proposal, pre domain: the main test, built when the
 // boot calls release_main(). DYNAMIC in the DTL flow: not in the saved
 // image, loaded after the restore with +dtl_add_pkg=<dir>:main_tb_pkg.
 //

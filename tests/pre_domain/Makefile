@@ -1,5 +1,5 @@
 # ============================================================================
-# pre_domain -- Approach B: common boot in the pre domain, main test
+# pre_domain -- domain-based proposal: common boot in the pre domain, main test
 # (soc_test_a) built at release_main().
 #
 #   make compile               [SIM=vcs|xrun] [TOPO=v1|v2]
@@ -11,7 +11,7 @@
 #   make run_jump_fwd          main jumps main -> shutdown: pre runs the
 #                              skipped phases alone, meets main at shutdown
 #   make run_gate_timeout      boot never releases: PREDOM/GATE fatal at 500 ns
-#   make save                  save point A (boot done, main test not built)
+#   make save                  boot checkpoint A (boot done, main test not built)
 #   make restore               restore A: same test, +MAIN_SEED, plus the
 #                              command-line overrides below, checked
 #                              (CL=0: +MAIN_SEED only)
@@ -28,7 +28,7 @@
 #                              main_delay 90 over the boot env's own set
 #   make run_cl_main           no save: main-tree overrides on the command
 #                              line, main tree built at the release
-#   make save_cl               save point A with STALE main-tree settings:
+#   make save_cl               checkpoint A with STALE main-tree settings:
 #                              cpu_agent -> cpu_agent_slow, cpu main 5,
 #                              profile "stale"
 #   make restore_cl            restore save_cl with NEW settings:
