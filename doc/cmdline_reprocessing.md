@@ -1,110 +1,178 @@
-# Command-line reprocessing
+# Command-line reprocessing: the machinery
 
-UVM reads the command line **once**, at time 0. A tree built later — after a
-restore with new plusargs — would otherwise see the *save* invocation's command
-line. `nv_socv_cmdline_processor` rewrites the `uvm_cmdline_processor` tables
-from the current invocation (`uvm_dpi_get_next_arg()`) right before each late
-build.
+This page explains **how** the library gives a late-built UVM tree the
+current command line: where UVM keeps the command line, how the library
+reads it again and rewrites it, and which parts of UVM are reused
+unchanged.
 
-The strategy (why the tables are reprocessed, repopulate vs. merge, and the
-precedence of repeated arguments) is explained with diagrams in
-[cmdline_strategy.md](cmdline_strategy.md). This page is the API reference
-and the worked cases.
+The **why**, the two strategies (repopulate and merge), the precedence of
+repeated arguments, and the VCS vs Xcelium results are in
+[cmdline_strategy.md](cmdline_strategy.md).
+
+## How UVM handles the command line
+
+UVM has one command-line object, the `uvm_cmdline_processor` singleton.
+When it is created at time 0, it walks the simulator's command line through
+a DPI call (`uvm_dpi_get_next_arg()`) and stores it in three string tables:
+
+| Table | Holds |
+|:--|:--|
+| `m_argv` | every argument |
+| `m_plus_argv` | the `+` arguments |
+| `m_uvm_argv` | the `+UVM…` / `-UVM…` arguments |
+
+After that, **nothing in UVM reads the simulator's command line again.**
+Every consumer asks the singleton (`get_arg_values()`, `get_arg_matches()`,
+`get_arg_value()`), and the singleton answers from its tables. The tables
+are the single source of truth.
+
+```mermaid
+flowchart LR
+    SIM["simulator command line"] -- "uvm_dpi_get_next_arg()<br/>once, at time 0" --> CLP
+
+    subgraph CLP["uvm_cmdline_processor singleton"]
+        T["m_argv · m_plus_argv · m_uvm_argv"]
+    end
+
+    CLP --> C1["uvm_root::new()<br/>global verbosity, report switches"]
+    CLP --> C2["run_test()<br/>+UVM_TESTNAME"]
+    CLP --> C3["uvm_root::build_phase()<br/>factory overrides, config,<br/>+UVM_TIMEOUT, +UVM_MAX_QUIT_COUNT"]
+    CLP --> C4["uvm_component::new()<br/>report action / severity / verbosity"]
+    CLP --> C5["testbench code<br/>get_arg_value(s)"]
+```
+
+Each consumer reads the tables **at one fixed moment** and turns the text
+into live state: factory overrides, `config_db` entries, report settings,
+the timeout. For a normal run that is all at time 0, or in the first build.
+
+## What goes wrong after a restore
+
+A checkpoint stores the tables along with everything else. On restore:
+
+1. The tables come back holding the **save** run's command line.
+2. Most consumers have already run before the save, so they do not read the
+   tables again.
+
+A tree built after the restore therefore sees the save run's settings, and
+the restore's new options are ignored.
+
+```mermaid
+flowchart LR
+    S["save run<br/>time 0: tables filled<br/>consumers run"] --> K["checkpoint<br/>tables saved"]
+    K --> R["restore<br/>tables = save run's<br/>consumers already done"]
+    R --> X["late build<br/>sees the save run's settings"]
+```
+
+## The approach: rewrite the tables, then reuse UVM
+
+The library does not add a second command-line store. It fixes the one UVM
+already has, so everything that reads it gets the new values for free.
+
+`nv_socv_cmdline_processor` extends `uvm_cmdline_processor`. That is the only
+reason for the class: as a subclass it may write the protected tables of the
+real singleton. Its functions are static and work on that singleton; no
+second instance is created.
+
+Right before a late build, four steps run:
 
 ```mermaid
 flowchart TD
-    A["late build about to start<br/>(pd_build · main build · ps_build)"] --> B{"$time == 0<br/>or already refreshed?"}
-    B -- yes --> N["no-op"]
-    B -- no --> C{"uvm_test_top exists?"}
-    C -- no --> R["REPOPULATE<br/>flush + refill m_argv / m_plus_argv / m_uvm_argv<br/>from the current command line<br/>then reapply_cmdline_settings()"]
-    C -- yes --> M["MERGE (append_cmdline)<br/>same key → replaced · +uvm_set_* → appended<br/>then reapply_cmdline_settings()"]
-    R --> T["tree built · start of its connect:<br/>reapply_report_settings_for_late_build()"]
-    M --> T
+    A["1. READ<br/>walk the current command line with<br/>uvm_dpi_get_next_arg(), the same DPI UVM uses at time 0"]
+    A --> B["2. COLLAPSE<br/>keep one occurrence per setting<br/>(+NV_SOCV_CMDLINE_PRECEDENCE=first|last)"]
+    B --> C{"uvm_test_top exists?"}
+    C -- no --> D["3a. REPOPULATE<br/>empty the three tables, fill them<br/>from the collapsed list"]
+    C -- yes --> E["3b. MERGE<br/>keep the tables; replace entries with the same<br/>option, append new +uvm_set_* entries"]
+    D --> F["4. REPLAY<br/>run the consumers again, reading from the tables"]
+    E --> F
 ```
 
-| API | Called by | Effect |
-|:--|:--|:--|
-| `refresh_cmdline_parser_for_test_launch()` | Approach A gate | rebuild the argv tables; **fatal** if `uvm_test_top` already exists |
-| `refresh_cmdline_parser_for_restore()` | save-context restore | merge the restore arguments + `reapply_cmdline_settings()` |
-| `refresh_cmdline_for_late_build(who)` | pre / post controllers | picks one of the two above; no-op at time 0 or if already refreshed |
-| `reapply_cmdline_settings()` | the refresh paths | global verbosity, `+uvm_set_action/severity/verbosity`, factory overrides, `+uvm_set_config_int/string`, default sequence, `+UVM_TIMEOUT`, `+UVM_MAX_QUIT_COUNT` |
-| `reapply_report_settings_for_late_build(who)` | pre / post controllers, start of connect | report switches for components created *after* the refresh |
-| `apply_build_settings_for_early_build(who)` | pre controller, start of `pd_build` | time 0 only: factory overrides + `+uvm_set_config_*` / default sequence before `uvm_root::build_phase` |
-| `enter_build_config_precedence()` / `exit_build_config_precedence(prev)` | `pd_build` / `ps_build` around each `build_phase()` | standard build-phase config precedence (higher level wins) |
-| `is_cmdline_refreshed()` | anyone | refreshed in this invocation? |
+Steps 1 to 3 only change text in the tables. Step 4 turns the new text into
+live UVM state.
 
-**Merge rules** (`+NAME=value`, key = text before the first `=`), applied to
-the current command line after repeated settings are collapsed
-(`+NV_SOCV_CMDLINE_PRECEDENCE`, see [cmdline_strategy.md](cmdline_strategy.md#repeated-arguments-precedence))
+### Step 4: replay, reusing what UVM already has
 
-| Argument | Action | Report |
-|:--|:--|:--|
-| key already present | every entry with that key replaced | `NV_SOCV_CMDLINE_PROCESSOR/OVERRIDE` |
-| `+uvm_set_action/severity/verbosity/inst_override/type_override/config_int/config_string/default_sequence` | always appended (independent settings) | — |
-| new key / positional | appended | — |
+What needs replaying depends on which consumers have already run:
 
-> **Caveats.** Factory overrides affect objects created *after* the refresh.
-> Config DB consumers must call `get()` again. The refresh touches
-> `uvm_cmdline_processor` internals (`m_argv`, `m_plus_argv`, `m_uvm_argv`)
-> and `uvm_root::m_check_verbosity()`; re-run [`tests/`](../tests/) whenever the
-> UVM version changes.
-
-## Worked cases — factory overrides and config at non-zero time
-
-Every example has `*_cl` targets that change factory overrides and config on
-the command line, where the tree using them is built at non-zero time. Each
-target passes the expected results as `+EXP_<KEY>=<value>`, and the test checks them
-(`tests_common_pkg::cl_expect`). Look for these lines in the log:
-
-```text
-UVM_INFO  ... [CL_EXPECT] DRV_TYPE = pcie_driver_fast as expected (post tree, type override) @...
-UVM_ERROR ... [CL_EXPECT] PCIE_MAIN = 20, expected 77 (post tree, config_int vs env default) @...
-UVM_INFO  ... [CL_EXPECT] 6 expectation(s) checked, 1 failed
+```mermaid
+flowchart TD
+    Q{"Has uvm_root::build_phase()<br/>already run?"}
+    Q -- "no (delayed_launch: run_test() not called yet)" --> U["Nothing to replay.<br/>run_test() and uvm_root::build_phase()<br/>run now and read the rewritten tables,<br/>exactly as at time 0."]
+    Q -- "yes (pre_domain main build, post_domain build)" --> L["The library replays the consumers that already ran:<br/>global verbosity: uvm_root::m_check_verbosity()<br/>factory overrides, config, default sequence,<br/>timeout, max quit count, report switches"]
+    L --> P["Once the late tree is built (start of its connect phase):<br/>report switches applied again,<br/>so components created after step 4 get them too"]
 ```
 
-The pattern is the same in all three examples. A **save run** gets *stale*
-settings, and the **restore run** gets *new* ones. The `restore_cl_drop` and
-`restore_cl_keep` targets show what happens when the restore gives none.
+The replay functions follow UVM's own code (`uvm_root::m_do_factory_settings()`,
+`m_do_config_settings()`, `m_do_timeout_settings()`, `m_do_max_quit_settings()`).
+They get their input the same way UVM does, by asking the singleton
+(`get_arg_matches()`, `get_arg_values()`), and apply it with the normal UVM
+calls (`factory.set_*_override_by_name()`, `uvm_config_db::set()`,
+`set_report_*()`, `set_timeout()`, `set_max_quit_count()`). The library does
+not keep a copy of the settings; it reads the rewritten tables every time.
 
-| Example | Target | Command-line settings | Expected |
+### What is reused and what is added
+
+| Part | Reused from UVM | Added by the library |
+|:--|:--|:--|
+| Command-line source | `uvm_dpi_get_next_arg()` | read it again at T != 0 |
+| Storage | the singleton's three tables | rewrite them (repopulate or merge) |
+| Queries | `get_arg_values()`, `get_arg_matches()`, `get_arg_value()` | — |
+| Test selection, first build | `run_test()`, `uvm_root::build_phase()` (delayed launch) | — |
+| Applying settings | factory, `config_db`, report and timeout APIs | call them again when the first build is already over |
+| Testbench code | its own `get_arg_value(s)` calls | — (it sees the new values if it reads after the rewrite) |
+
+## Where it runs
+
+| Flow | Point | Tables | Replay |
 |:--|:--|:--|:--|
-| `delayed_launch` | `run_cl` | `+UVM_TESTNAME=dl_test_b`, type `dl_driver→dl_driver_fast`, inst `uvm_test_top.env.chk→dl_checker_strict`, `env.drv n_items=12` (env default 4), `env profile=stress` | all 4 applied |
-| | `save_cl` | saved at the gate; stale: type `dl_driver→dl_driver_slow`, `n_items=2`, `profile=stale` | — |
-| | `restore_cl` | the `run_cl` settings | all 4 applied, stale ones gone (**repopulate**: no `uvm_test_top` yet) |
-| | `restore_cl_drop` | only `+UVM_TESTNAME=dl_test_b` | VCS: `dl_driver`, `dl_checker`, 4, `default`; Xcelium: `dl_driver_slow`, `dl_checker`, 2, `stale` (see [cmdline_strategy.md](cmdline_strategy.md#xcelium-the-restored-command-line)) |
-| `pre_domain` | `run_cl_pre` | type `fw_load_agent→fw_load_agent_fast`, `uvm_pre_top.env.fw_load_agt main_delay=90` (no save) | fast, 90 |
-| | `run_cl_main` | type `cpu_agent→cpu_agent_fast`, inst `uvm_test_top.env.ddr_agt→ddr_agent_lp`, `cpu_agt main_delay=250` (env sets 100), `profile=perf` | all 4 applied |
-| | `save_cl` | saved before the main build; stale: `cpu_agent→cpu_agent_slow`, `main_delay=5`, `profile=stale` | — |
-| | `restore_cl` | the `run_cl_main` settings | all 4 applied, stale ones gone (repopulate) |
-| | `restore_cl_drop` | none | VCS: `cpu_agent`, `ddr_agent`, 100, `default`; Xcelium: `cpu_agent_slow`, `ddr_agent`, 5, `stale` |
-| `post_domain` | `run_cl` | type `pcie_driver→pcie_driver_fast`, inst `uvm_post_top.env.pcie_sb→pcie_scoreboard_strict`, `pcie_agt main_delay=77` (pcie env sets 20), `profile=gen5`; main tree: `uvm_test_top.env post_window=40` and type `soc_txn→soc_txn_ext`, both used by the main env **after the release** | all 6 applied |
-| | `save_cl` | save point B (before the release); stale: `pcie_driver→pcie_driver_slow`, post `profile=stale`, `post_window=1` | — |
-| | `restore_cl` | the `run_cl` settings | all 6 applied; each new setting wins over the stale one (**merge**: `uvm_test_top` exists, entries replayed in order) |
-| | `restore_cl_keep` | none | stale ones persist: `pcie_driver_slow`, `pcie_scoreboard`, 20, `stale`, `post_window=1`, `soc_txn` |
+| `delayed_launch` | `trigger_test_launch`, before `run_test()` | repopulate | by UVM itself (`run_test()`) |
+| `pre_domain` | `release_main()`, before the main-test build | repopulate | by the library |
+| `post_domain` | `release_post()`, before the post-domain build | merge | by the library |
 
-```bash
-cd tests/post_domain
-make SIM=vcs compile
-make SIM=vcs save_cl
-make SIM=vcs restore_cl        # or restore_cl_keep
-```
+The reprocessing runs once per invocation. At time 0 it does nothing, since
+the tables are already current.
 
-> **Two library behaviours these cases cover**
->
-> 1. **Time-0 settings for the pre tree (`pre_domain run_cl_pre`: `FW_TYPE`,
->    `FW_MAIN`).** `pd_build` runs *before* `uvm_root::build_phase`, which is
->    where UVM applies `+uvm_set_*_override` / `+uvm_set_config_*`. At the start
->    of `pd_build` at time 0, the pre-domain controller calls
->    `nv_socv_cmdline_processor::apply_build_settings_for_early_build()`, which
->    applies them first. The root applies them again later with the same values.
-> 2. **Config precedence in late builds (`PCIE_MAIN` in `post_domain`, `FW_MAIN`
->    in `pre_domain`).** `uvm_config_db::set` lowers precedence by context depth
->    (so the command line and the test win over a component's own default) only
->    while `uvm_root::m_current_phase` is named `build`. In `pd_build` and
->    `ps_build` that would not hold, and the latest set would win: the env's
->    `main_delay=20` would beat the command line's 77. Each `build_phase()` call
->    in `pd_build` and `ps_build` is therefore wrapped in
->    `enter_build_config_precedence()` / `exit_build_config_precedence()`. These
->    point `m_current_phase` at the common `build` node for that call, giving the
->    same precedence as a normal build.
+## API
 
+| API | Called by | Does |
+|:--|:--|:--|
+| `refresh_cmdline_parser_for_test_launch()` | delayed launch gate | steps 1 to 3 (repopulate); fatal if `uvm_test_top` exists |
+| `refresh_cmdline_parser_for_restore()` | save-context restore | steps 1 to 3 (merge) and step 4 |
+| `refresh_cmdline_for_late_build(who)` | pre / post domain controllers | picks repopulate or merge, then step 4; no-op at time 0 or if already done |
+| `reapply_cmdline_settings()` | the refresh paths | step 4 |
+| `reapply_report_settings_for_late_build(who)` | pre / post controllers, start of connect | report switches for components created after step 4 |
+| `is_cmdline_refreshed()` | anyone | has the command line been reprocessed in this invocation? |
+| `apply_build_settings_for_early_build(who)` | pre controller, start of `pd_build` | see below |
+| `enter_build_config_precedence()` / `exit_build_config_precedence(prev)` | around each `build_phase()` in `pd_build` / `ps_build` | see below |
+
+## Two related build fixes
+
+These are not about restore, but they make command-line settings behave the
+same for trees built outside the normal UVM build.
+
+- **Pre tree at time 0.** `pd_build` runs before `uvm_root::build_phase()`,
+  which is where UVM applies factory and config settings. The pre-domain
+  controller calls `apply_build_settings_for_early_build()` first, so the pre
+  tree sees them. UVM applies the same values again later.
+- **Config precedence in `pd_build` and `ps_build`.** `uvm_config_db` lets a
+  higher-level set (the command line, the test) beat a component's own
+  default only while UVM's current phase is `build`. Each `build_phase()` call
+  in those domains is wrapped in `enter_build_config_precedence()` /
+  `exit_build_config_precedence()`, which point the current phase at the
+  common `build` node for the duration of the call.
+
+## Caveats
+
+- Settings already used before the save keep their old values. A factory
+  override affects objects created after step 4, and a `config_db` value
+  changes only for code that calls `get()` again.
+- The library writes UVM internals (`m_argv`, `m_plus_argv`, `m_uvm_argv`)
+  and calls `uvm_root::m_check_verbosity()`. Rerun [`tests/`](../tests/) when
+  the UVM version changes.
+
+## Where it is checked
+
+Each test folder has `*_cl` targets that give stale settings to the save run
+and new ones to the restore, and check the result with `+EXP_<KEY>=<value>`
+(`[CL_EXPECT]` lines in the log). `restore_cl_drop` and `restore_cl_keep`
+give the restore no settings. The targets and their expected values are in
+[tests.md](tests.md#command-line-targets).

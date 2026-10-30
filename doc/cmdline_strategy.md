@@ -262,24 +262,59 @@ unset a `+uvm_set_*` setting, only override its target.
 
 ## What is seen at each point, VCS and Xcelium
 
-Values of UVM options (`+UVM_<OPTION>`, `+uvm_set_*`) as UVM sees them, with
-the default `+NV_SOCV_CMDLINE_PRECEDENCE=first`:
+This section answers one question: **at a given moment, which value of a UVM
+option (`+UVM_<OPTION>`, `+uvm_set_*`) does UVM use: the save run's or the
+restore's?**
 
-| Point | VCS | Xcelium |
+The life of a checkpoint has four moments:
+
+1. **Save run.** UVM reads the save command line at time 0 and builds its
+   tables from it.
+2. **Checkpoint.** The tables are saved inside the checkpoint, with the save
+   run's values.
+3. **Restore, before the reprocessing point.** The tables come back from the
+   checkpoint exactly as saved. UVM has not looked at the restore command
+   line yet, so it still uses the save run's values.
+4. **Reprocessing point** (`trigger_test_launch`, `release_main()`,
+   `release_post()`). The library asks the simulator for the current command
+   line and rewrites the tables (repopulate or merge). From here on, the
+   result depends on whether the restore gave the option again.
+
+The table uses the default, `+NV_SOCV_CMDLINE_PRECEDENCE=first`.
+
+| Moment | VCS | Xcelium |
 |:--|:--|:--|
-| Save run, from time 0 | save run's values | save run's values |
-| Checkpoint (`$save`) | the tables are saved with the save run's values | same |
-| Restore, before the reprocessing point | **save run's** values (tables restored; the restore's options not seen yet) | same |
-| Reported by the simulator after the restore | the restore's command line only | the restore's command line, then the save run's options (some twice) |
-| After reprocessing: the restore gives the same option / target | **restore's** value | **restore's** value |
-| After reprocessing: the restore does not give it, **repopulate** | **gone** (UVM default) | **save run's** value (still reported by Xcelium) |
-| After reprocessing: the restore does not give it, **merge** | **save run's** value | **save run's** value |
-| A value read or applied before the save (variable, `config_db::get()` done, component or object already created) | **old** value; the new one only if read again / created after the reprocessing point | same |
+| 1. Save run | save run's values | save run's values |
+| 2. Checkpoint | save run's values are stored | same |
+| 3. Restore, before reprocessing | still the **save run's** values | same |
+| What the simulator reports as the command line after the restore | only the restore's command line | the restore's command line **and** the save run's arguments |
+| 4. After reprocessing, the restore **gives the option again** (same option, same target) | the **restore's** value | the **restore's** value |
+| 4. After reprocessing, the restore **does not give it**, repopulate | **gone**: UVM default | the **save run's** value (Xcelium still reports it, so it is read back in) |
+| 4. After reprocessing, the restore **does not give it**, merge | the **save run's** value (merge keeps the old table) | the **save run's** value |
+| Anything already used before the save: a variable already set, a `config_db::get()` already done, a component or object already created | keeps the **old** value; it changes only if it is read again or created after the reprocessing point | same |
 
-With `+NV_SOCV_CMDLINE_PRECEDENCE=last`, only one row changes: when the
-restore gives the same option or target, Xcelium ends up with the **save
-run's** value, because its copy is reported after the restore's. VCS still
-gets the restore's value, since it reports each option only once.
+#### Example
+
+The save run has `+uvm_set_type_override=dl_driver,dl_driver_slow`. After
+the reprocessing point:
+
+| The restore command line has | Strategy | VCS builds | Xcelium builds |
+|:--|:--|:--|:--|
+| `+uvm_set_type_override=dl_driver,dl_driver_fast` | either | `dl_driver_fast` | `dl_driver_fast` |
+| nothing for `dl_driver` | repopulate | `dl_driver` (no override) | `dl_driver_slow` |
+| nothing for `dl_driver` | merge | `dl_driver_slow` | `dl_driver_slow` |
+
+In short, a setting the restore gives again always wins. A setting the
+restore leaves out survives merge on both simulators, and survives
+repopulate only on Xcelium. `restore_cl_drop` (`delayed_launch`,
+`pre_domain`) checks the repopulate row, and `restore_cl_keep`
+(`post_domain`) checks the merge row.
+
+With `+NV_SOCV_CMDLINE_PRECEDENCE=last`, only the "gives the option again"
+row changes, and only on Xcelium. There, both copies are reported and the
+save run's copy comes after the restore's, so `last` picks the save run's
+value (`dl_driver_slow`). VCS reports only the restore's copy, so it still
+gets `dl_driver_fast`.
 
 ## Summary
 
@@ -290,6 +325,6 @@ gets the restore's value, since it reports each option only once.
 | Save run's tables | flushed | kept |
 | Restore's `+UVM_<OPTION>` | the only entry | replaces the same option in place |
 | Restore's `+uvm_set_*` | the only entries | appended at the tail, applied last |
-| Save-run setting the restore does not give | gone (VCS); still reported on Xcelium | stays |
+| Save-run setting the restore does not give | gone on VCS; kept on Xcelium (still reported) | kept on both |
 | Repeated settings on the current command line | collapsed by `+NV_SOCV_CMDLINE_PRECEDENCE` (default `first`) | same |
 | After the rewrite | `reapply_cmdline_settings()`, then report settings for components created later | same |

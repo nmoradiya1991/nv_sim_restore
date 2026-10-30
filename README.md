@@ -152,6 +152,33 @@ make -C post_domain    compile save    restore    FLOW=std|dtl
 (paths and `UVM_INFO <file> @ <time>: <component>` prefixes trimmed; times
 are in fs, so `@50000000` = 50 ns).
 
+**`SIM=xrun` (`FLOW=std` or `FLOW=dtr`) gives the same outcome.** The same
+`REPOPULATE` / `APPEND`, `REAPPLY`, `UVM_CMDLINE_PROC` and `CL_EXPECT` lines
+appear, with the same values and topologies, and every check passes. In
+`delayed_launch` only the three restore settings are applied, as on VCS.
+The differences are cosmetic:
+
+| | VCS | Xcelium |
+|---|---|---|
+| Time unit in the log | fs: `@50000000` = 50 ns | ps: `@50000` = 50 ns |
+| Restore marker | `<50001000> SIM_IMAGE: simulation restored` | `<50001> SIM_IMAGE: simulation restored` |
+| Save marker (`delayed_launch`) | `saving checkpoint ckpt_vcs/dl_ckpt_cl.chk` | `saving checkpoint dl_ckpt_cl` |
+| `[PHASE]` lines | phase name left-aligned | phase name right-aligned |
+| `UVM_WARNING` count (`pre_domain`, `post_domain`) | 0 | 1 (`MULTVERB`, see below) |
+
+On Xcelium, the `pre_domain` and `post_domain` restores report one
+`MULTVERB` warning at the reprocessing point:
+
+```
+UVM_WARNING uvm_cmdline_report.svh(131) @ 50001: reporter [MULTVERB] Multiple (2) +UVM_VERBOSITY arguments provided on the command line.  'UVM_MEDIUM' will be used.  Provided list: UVM_MEDIUM, UVM_MEDIUM.
+```
+
+The command line holds a single `+UVM_VERBOSITY`. Xcelium's IEEE UVM keeps
+the verbosity settings in a static list that is filled at time 0 and is not
+cleared when the reapply reads them again, so the same value is counted
+twice. The verbosity used is the one from time 0. VCS (UVM 1.2) has no such
+list, so it reports no warning.
+
 **`FLOW=std` and `FLOW=dtl` produce the same restore log.** In all three
 folders the DTL log has exactly one extra line, the dynamic package load
 right after the restore:
@@ -161,15 +188,16 @@ right after the restore:
 <50001000> SIM_IMAGE: $dtl_load (+dtl_add_pkg=DTL_main_tb_pkg:main_tb_pkg)
 ```
 
-Every restore ends with `UVM_ERROR : 0`, `UVM_FATAL : 0` and
-`[CL_EXPECT] <n> expectation(s) checked, 0 failed`.
+Every restore, on both simulators, ends with `UVM_ERROR : 0`, `UVM_FATAL : 0`
+and `[CL_EXPECT] <n> expectation(s) checked, 0 failed` (4 in `delayed_launch`
+and `pre_domain`, 6 in `post_domain`).
 
 With `SIM=xrun FLOW=dtr` the restore log carries one marker line in the same
 place instead (`+dtr_pkg`; xrun links the package before the restart):
 
 ```
-<50001000> SIM_IMAGE: simulation restored
-<50001000> SIM_IMAGE: DTR package main_tb_pkg linked with the restored snapshot
+<50001> SIM_IMAGE: simulation restored
+<50001> SIM_IMAGE: DTR package main_tb_pkg linked with the restored snapshot
 ```
 
 > [!IMPORTANT]
