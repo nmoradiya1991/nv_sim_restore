@@ -29,9 +29,10 @@ DTR static image) and `tb_top.sv`. `make help` lists the folder's targets.
 | [doc/pre_domain.md](doc/pre_domain.md) | Approach B: pre domain |
 | [doc/post_domain.md](doc/post_domain.md) | Approach B: post domain |
 | [doc/cmdline_strategy.md](doc/cmdline_strategy.md) | why and how the UVM command line is reprocessed: repopulate vs. merge, precedence, diagrams |
-| [doc/cmdline_reprocessing.md](doc/cmdline_reprocessing.md) | command-line refresh API, merge rules, worked override cases |
+| [doc/cmdline_reprocessing.md](doc/cmdline_reprocessing.md) | how the command-line tables are reread, rewritten and reused, API |
 | [doc/save_restore.md](doc/save_restore.md) | save / restore, Xcelium `-process_save`, VCS Dynamic Test Load, Xcelium Dynamic Test Reload |
-| [doc/tests.md](doc/tests.md) | test folders and targets |
+| [doc/tests.md](doc/tests.md) | test folders and targets, command-line targets and expected results |
+| [doc/tool_uvm_dependencies.md](doc/tool_uvm_dependencies.md) | simulator and UVM library dependencies found so far, open items, qualifying new releases |
 
 ## Setup
 
@@ -164,20 +165,11 @@ The differences are cosmetic:
 | Restore marker | `<50001000> SIM_IMAGE: simulation restored` | `<50001> SIM_IMAGE: simulation restored` |
 | Save marker (`delayed_launch`) | `saving checkpoint ckpt_vcs/dl_ckpt_cl.chk` | `saving checkpoint dl_ckpt_cl` |
 | `[PHASE]` lines | phase name left-aligned | phase name right-aligned |
-| `UVM_WARNING` count (`pre_domain`, `post_domain`) | 0 | 1 (`MULTVERB`, see below) |
 
-On Xcelium, the `pre_domain` and `post_domain` restores report one
-`MULTVERB` warning at the reprocessing point:
-
-```
-UVM_WARNING uvm_cmdline_report.svh(131) @ 50001: reporter [MULTVERB] Multiple (2) +UVM_VERBOSITY arguments provided on the command line.  'UVM_MEDIUM' will be used.  Provided list: UVM_MEDIUM, UVM_MEDIUM.
-```
-
-The command line holds a single `+UVM_VERBOSITY`. Xcelium's IEEE UVM keeps
-the verbosity settings in a static list that is filled at time 0 and is not
-cleared when the reapply reads them again, so the same value is counted
-twice. The verbosity used is the one from time 0. VCS (UVM 1.2) has no such
-list, so it reports no warning.
+Both simulators end every restore with `UVM_WARNING : 0`. A
+`[MULTVERB] Multiple (2) +UVM_VERBOSITY arguments` warning on Xcelium means
+the library in use predates the global-verbosity fix described in
+[doc/cmdline_strategy.md](doc/cmdline_strategy.md#verbosity-on-save-and-restore).
 
 **`FLOW=std` and `FLOW=dtl` produce the same restore log.** In all three
 folders the DTL log has exactly one extra line, the dynamic package load

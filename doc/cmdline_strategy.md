@@ -316,6 +316,60 @@ save run's copy comes after the restore's, so `last` picks the save run's
 value (`dl_driver_slow`). VCS reports only the restore's copy, so it still
 gets `dl_driver_fast`.
 
+## Verbosity on save and restore
+
+There are two ways to set verbosity from the command line, and they behave
+differently across a restore.
+
+**Global: `+UVM_VERBOSITY=<verb>`.** UVM sets it once, when UVM starts, on
+`uvm_root` and every component that exists. A component created later copies
+its parent's level. `run_test()` does not read it again. The library
+therefore applies it again itself at every reprocessing point:
+
+| Moment | Level used |
+|:--|:--|
+| Save run, from time 0 | save run's value |
+| Restore, before the reprocessing point | save run's value (restored with everything else) |
+| At the reprocessing point | the restore's value, set on `uvm_root` and **every existing component**, including those restored from the checkpoint |
+| Components created afterwards | the restore's value, copied from their parent |
+
+The same holds on VCS and Xcelium, and in all three flows. In
+`delayed_launch` it is applied right after the repopulate, before
+`run_test()`. Xcelium's UVM also keeps a list of the global values parsed at
+time 0, and uses its first entry. The library empties that list first, so
+the restore's value is used and no `MULTVERB` warning is printed.
+
+Things to know about the global option:
+
+- **It overwrites levels set in code.** At the reprocessing point, every
+  existing component's level is reset to the global value, including a
+  component that set its own with `set_report_verbosity_level()`.
+  Per-ID levels (`set_report_id_verbosity()`) are kept.
+- **Restored code is affected too.** A tree that was running at the save
+  changes level in the middle of its run, at the reprocessing point.
+- **It is all or nothing.** It changes every component, so it cannot target
+  only the part being debugged after the restore.
+
+**Per component: `+uvm_set_verbosity=<comp>,<id>,<verb>,<phase>` or
+`…,time,<time>`.**
+It sets the level only for the components matching `<comp>`, and optionally
+only for one message ID. The library applies it to matching components at
+the reprocessing point, and again at the start of the late tree's connect
+phase for components created after that point. It runs after the global
+option, so it wins over it.
+
+> [!TIP]
+> **To change verbosity at restore, prefer `+uvm_set_verbosity` over
+> `+UVM_VERBOSITY`.** Leave the global level as it was in the save run and
+> raise only what you want to look at, for example:
+>
+> ```bash
+> +uvm_set_verbosity=uvm_post_top.env.pcie_agt*,_ALL_,UVM_HIGH,time,0
+> ```
+>
+> The restored trees keep their levels, and only the targeted components
+> print more.
+
 ## Summary
 
 | | Repopulate | Merge |

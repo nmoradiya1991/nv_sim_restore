@@ -5,6 +5,7 @@
 `define NV_SOCV_CMDLINE_PROCESSOR_SV
 
 import uvm_pkg::*;
+`include "uvm_macros.svh"
 `include "nv_socv_report_macros.sv"
 
 /**
@@ -796,6 +797,25 @@ class nv_socv_cmdline_processor extends uvm_cmdline_processor;
     endfunction
 
     /**
+     * @brief Apply the global `+UVM_VERBOSITY` from the current argv tables.
+     *
+     * @details
+     * UVM sets the global verbosity only once, at start-up, through
+     * `uvm_root::m_check_verbosity()`, which sets it on `uvm_root` and every
+     * existing component; components created later copy their parent's level.
+     * IEEE UVM also keeps the parsed values in the static
+     * `uvm_cmdline_verbosity::settings`, which `m_check_verbosity()` only
+     * appends to and whose first entry wins. That list still holds the save
+     * run's value after a restore, so it is emptied first.
+     */
+    static local function void apply_global_verbosity();
+`ifdef UVM_VERSION_POST_2020_1_0
+        uvm_cmdline_verbosity::settings.delete();
+`endif
+        uvm_root::get().m_check_verbosity();
+    endfunction
+
+    /**
      * @brief Reapply UVM command-line side effects after checkpoint restore.
      *
      * @details
@@ -819,14 +839,11 @@ class nv_socv_cmdline_processor extends uvm_cmdline_processor;
      */
     static function void reapply_cmdline_settings();
         string settings[$];
-        uvm_root root;
         uvm_cmdline_processor clp;
 
-        root = uvm_root::get();
         clp = get_inst();
 
-        // Global verbosity is normally processed only in uvm_root::new().
-        root.m_check_verbosity();
+        apply_global_verbosity();
 
         // Replay factory/config/timeout/quit without calling build_phase().
         apply_factory_settings();
@@ -862,7 +879,9 @@ class nv_socv_cmdline_processor extends uvm_cmdline_processor;
      * is complete and `test_launch_event` has fired, but **before** `uvm_test_top`
      * is created. It discards stale command-line state and repopulates the UVM
      * parser from the current invocation so `run_test()` sees the intended
-     * `+UVM_TESTNAME` and related plusargs.
+     * `+UVM_TESTNAME` and related plusargs. The global `+UVM_VERBOSITY` is
+     * applied here, since `run_test()` does not read it again and the test
+     * tree inherits the level of `uvm_root`.
      *
      * @warning Issues `NV_SOCV_CMDLINE_PROCESSOR` fatal if `uvm_test_top` already exists,
      *          because changing the selected test after construction is unsafe.
@@ -872,6 +891,7 @@ class nv_socv_cmdline_processor extends uvm_cmdline_processor;
             `nv_uvm_fatal("NV_SOCV_CMDLINE_PROCESSOR", "Cannot refresh CLP after uvm_test_top exists");
         end
         repopulate_cmdline();  // local/static, not public API
+        apply_global_verbosity();
     endfunction
 
     /**

@@ -96,7 +96,7 @@ What needs replaying depends on which consumers have already run:
 ```mermaid
 flowchart TD
     Q{"Has uvm_root::build_phase()<br/>already run?"}
-    Q -- "no (delayed_launch: run_test() not called yet)" --> U["Nothing to replay.<br/>run_test() and uvm_root::build_phase()<br/>run now and read the rewritten tables,<br/>exactly as at time 0."]
+    Q -- "no (delayed_launch: run_test() not called yet)" --> U["Only the global verbosity is applied:<br/>UVM set it on uvm_root at start-up and<br/>run_test() does not read it again.<br/>run_test() and uvm_root::build_phase()<br/>then read the rewritten tables, as at time 0."]
     Q -- "yes (pre_domain main build, post_domain build)" --> L["The library replays the consumers that already ran:<br/>global verbosity: uvm_root::m_check_verbosity()<br/>factory overrides, config, default sequence,<br/>timeout, max quit count, report switches"]
     L --> P["Once the late tree is built (start of its connect phase):<br/>report switches applied again,<br/>so components created after step 4 get them too"]
 ```
@@ -135,7 +135,7 @@ the tables are already current.
 
 | API | Called by | Does |
 |:--|:--|:--|
-| `refresh_cmdline_parser_for_test_launch()` | delayed launch gate | steps 1 to 3 (repopulate); fatal if `uvm_test_top` exists |
+| `refresh_cmdline_parser_for_test_launch()` | delayed launch gate | steps 1 to 3 (repopulate) and the global verbosity; fatal if `uvm_test_top` exists |
 | `refresh_cmdline_parser_for_restore()` | save-context restore | steps 1 to 3 (merge) and step 4 |
 | `refresh_cmdline_for_late_build(who)` | pre / post domain controllers | picks repopulate or merge, then step 4; no-op at time 0 or if already done |
 | `reapply_cmdline_settings()` | the refresh paths | step 4 |
